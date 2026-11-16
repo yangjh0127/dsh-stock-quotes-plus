@@ -539,7 +539,6 @@ window.__ModuleLoader__.load({
     /** Viewbox the focus chart draws in, with the axis gutters reserved. */
     const FOCUS_BOX = { width: 1000, height: 210, left: 12, right: 76, top: 14, bottom: 30 };
     const VOLUME_HEIGHT = 48;
-    const VOLUME_GAP = 12;
     const FOCUS_PLOT = {
       width: FOCUS_BOX.width - FOCUS_BOX.left - FOCUS_BOX.right,
       height: FOCUS_BOX.height - FOCUS_BOX.top - FOCUS_BOX.bottom,
@@ -1075,9 +1074,6 @@ window.__ModuleLoader__.load({
 .dst-detail-trend { margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--dsw-alias-border-l2); border-bottom: 1px solid var(--dsw-alias-border-l2); }
 .dst-detail-trend-title { color: var(--dsw-alias-label-secondary); font-size: 11px; margin-bottom: 5px; }
 .dst-detail-trend svg { display: block; width: 100%; height: 54px; }
-.dst-detail-volume { margin-top: 7px; }
-.dst-detail-volume svg { height: 24px; }
-.dst-detail-volume-label { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 3px; }
 .dst-detail-trend-times { display: flex; justify-content: space-between; color: var(--dsw-alias-label-secondary); font-size: 10px; font-variant-numeric: tabular-nums; margin-top: 4px; }
 .dst-detail-trend-status { color: var(--dsw-alias-label-secondary); line-height: 18px; }
 .dst-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
@@ -1205,22 +1201,19 @@ window.__ModuleLoader__.load({
         const points = trend?.points ?? [];
         const kind = sessionKindOf(quote.market);
         const path = sparklinePath(points, { kind, width: 228, height: 50 });
-        const volume = volumeGeometry(points, points.map((_, index) => seriesXAt(points, index, kind, 228)), 228, 24);
+        const volume = volumeGeometry(points, points.map((_, index) => seriesXAt(points, index, kind, 228)), 228, 16);
         const chart = path === ''
           ? h('div', { className: 'dst-detail-trend-status', role: 'status' },
             trend?.error || (trend?.seeded ? '暂无分时数据' : '正在加载分时…'))
           : h(React.Fragment, null,
             h('svg', { role: 'img', 'aria-label': '当日分时图', className: toneClass(quote.changePct), viewBox: '-2 0 232 50' },
+              volume.bars.length === 0 ? null : h('g', { className: 'dst-detail-volume', role: 'group', 'aria-label': '成交量' },
+                volume.bars.map((bar) => h('rect', {
+                  key: bar.index, x: bar.x, y: 50 - bar.height, width: bar.width, height: bar.height,
+                  fill: 'currentColor', fillOpacity: points[bar.index].volumeEstimated ? 0.22 : 0.36, className: toneClass(bar.change),
+                }))),
               h('path', { d: path, fill: 'none', stroke: 'currentColor', strokeWidth: '1.5',
                 strokeLinecap: 'round', strokeLinejoin: 'round', vectorEffect: 'non-scaling-stroke' })),
-            volume.bars.length === 0 ? null : h('div', { className: 'dst-detail-volume' },
-              h('div', { className: 'dst-detail-trend-title dst-detail-volume-label' },
-                h('span', null, '成交量'), h('span', null, formatVolume(volume.max))),
-              h('svg', { role: 'img', 'aria-label': '成交量', viewBox: '-2 0 232 24' },
-                volume.bars.map((bar) => h('rect', {
-                  key: bar.index, x: bar.x, y: 24 - bar.height, width: bar.width, height: bar.height,
-                  fill: 'currentColor', fillOpacity: points[bar.index].volumeEstimated ? 0.5 : 0.8, className: toneClass(bar.change),
-                })))),
             h('div', { className: 'dst-detail-trend-times' },
               h('span', null, points[0]?.t),
               h('span', null, points.at(-1)?.t)));
@@ -2055,7 +2048,6 @@ window.__ModuleLoader__.load({
         const cursor = geometry === null || hover === null ? undefined : geometry.points[hover];
         const volume = geometry && volumeGeometry(geometry.points, geometry.xs, FOCUS_PLOT.width, VOLUME_HEIGHT);
         const showVolume = volume?.bars.length > 0;
-        const plotBottom = FOCUS_PLOT.height + (showVolume ? VOLUME_GAP + VOLUME_HEIGHT : 0);
         const axis = { fill: 'var(--dsw-alias-label-secondary)', fontSize: '11' };
         const grid = 'var(--dsw-alias-border-l1)';
 
@@ -2096,7 +2088,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'dsq-focus-empty', role: 'status' },
               cached?.error || t(!cached || (focusDays === 1 && !cached.seeded) ? 'panel.loading' : 'focus.empty'))
             : h('svg', {
-              viewBox: `0 0 ${FOCUS_BOX.width} ${FOCUS_BOX.height + plotBottom - FOCUS_PLOT.height}`,
+              viewBox: `0 0 ${FOCUS_BOX.width} ${FOCUS_BOX.height}`,
               role: 'img',
               'aria-label': t('panel.chart'),
               onPointerMove: (event) => {
@@ -2112,15 +2104,12 @@ window.__ModuleLoader__.load({
                 h('line', { x1: 0, x2: FOCUS_PLOT.width, y1: tick.y, y2: tick.y, stroke: grid, strokeWidth: '1' }),
                 h('text', { x: FOCUS_PLOT.width + 8, y: tick.y + 4, ...axis }, tick.label))),
               geometry.xTicks.map((tick, index) => h('g', { key: `gx${index}` },
-                h('line', { x1: tick.x, x2: tick.x, y1: 0, y2: plotBottom, stroke: grid, strokeWidth: '1' }),
-                h('text', { x: tick.x, y: plotBottom + 16, textAnchor: 'middle', ...axis }, tick.label))),
+                h('line', { x1: tick.x, x2: tick.x, y1: 0, y2: FOCUS_PLOT.height, stroke: grid, strokeWidth: '1' }),
+                h('text', { x: tick.x, y: FOCUS_PLOT.height + 16, textAnchor: 'middle', ...axis }, tick.label))),
               showVolume ? h('g', { className: 'dsq-volume', role: 'group', 'aria-label': t('focus.volume') },
-                h('line', { x1: 0, x2: FOCUS_PLOT.width, y1: plotBottom, y2: plotBottom, stroke: grid }),
-                h('text', { x: FOCUS_PLOT.width + 8, y: plotBottom - VOLUME_HEIGHT + 5, ...axis }, t('focus.volume')),
-                h('text', { x: FOCUS_PLOT.width + 8, y: plotBottom - VOLUME_HEIGHT + 19, ...axis }, formatVolume(volume.max)),
                 volume.bars.map((bar) => h('rect', {
-                  key: bar.index, x: bar.x, y: plotBottom - bar.height, width: bar.width, height: bar.height,
-                  fill: 'currentColor', fillOpacity: geometry.points[bar.index].volumeEstimated ? 0.5 : 0.8,
+                  key: bar.index, x: bar.x, y: FOCUS_PLOT.height - bar.height, width: bar.width, height: bar.height,
+                  fill: 'currentColor', fillOpacity: geometry.points[bar.index].volumeEstimated ? 0.22 : 0.36,
                   className: 'dsq-' + toneOf(bar.change),
                 }))) : null,
               geometry.preCloseY === undefined
@@ -2159,7 +2148,7 @@ window.__ModuleLoader__.load({
                     x1: geometry.xs[hover],
                     x2: geometry.xs[hover],
                     y1: 0,
-                    y2: plotBottom,
+                    y2: FOCUS_PLOT.height,
                     stroke: 'var(--dsw-alias-label-secondary)',
                     strokeWidth: '1',
                     strokeDasharray: '3 3',

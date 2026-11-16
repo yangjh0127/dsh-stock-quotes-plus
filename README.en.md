@@ -10,7 +10,7 @@ A DeepSeek Harness plugin for watchlist quotes and intraday charts from Longbrid
 - **Top ticker** — visible by default and configurable from the Data toolbar. It scrolls security names, prices and price changes. Select a name to open a quote detail card with an intraday chart. The panel and ticker share a watchlist and refresh interval.
 - **Agent quotes** — `stock_quote` supports batches. Without arguments it uses the tool's default symbols configured in the DSH profile.
 
-Charts and ticker details include volume bars. Historical bars use Longbridge data, and live volume is estimated from changes in reported cumulative volume.
+Charts and ticker details overlay volume bars behind the price line. Historical bars use Longbridge data, and live volume is estimated from changes in reported cumulative volume.
 
 ## Install and sign in
 
