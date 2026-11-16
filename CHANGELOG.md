@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The 1.x headings group the fast pre-2.0 development series (roughly one release
 per merged theme) rather than every intermediate patch; the dates are the days
-those series closed. The current release is **2.0.2**, cut on 2026-11-02.
+those series closed.
+
+## [3.0.1] - 2026-11-16
+
+- Add Longbridge OAuth sign-in to the plugin settings and Data toolbar.
+- Fix intraday chart loading and expand search across US, Hong Kong, Shanghai, Shenzhen, STAR Market, and Beijing Exchange securities.
+- Show security names and a 1px top border in the ticker, and show an intraday chart in the quote popup.
 
 ## [3.0.0]
 

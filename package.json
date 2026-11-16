@@ -1,6 +1,6 @@
 {
   "name": "dsh-stock-quotes-plus",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "DeepSeek Harness sidebar and optional ticker for Longbridge market data, with the stock_quote agent tool.",
   "keywords": [
     "dsh",
