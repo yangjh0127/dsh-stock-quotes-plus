@@ -35,11 +35,10 @@ plugin_manager  action: install_bundle  target: <绝对路径>/dsh-stock-quotes-
 
 ### 长桥 OAuth 2.0
 
-1. 按长桥[官方快速开始](https://open.longbridge.com/zh-CN/docs/getting-started#认证方式)注册 OAuth 公开客户端，回调 URI 使用 `http://localhost:60355/callback`，记下 Client ID。
-2. 在本仓库目录运行 `npm ci`，然后运行 `npm run authorize -- 你的ClientID`。浏览器打开命令打印的长桥链接，登录并完成授权。行情接口无需账户读取或交易权限，可取消勾选这些权限。
-3. 在启动 DSH 的同一终端设置 Client ID。PowerShell 用 `$env:LONGBRIDGE_CLIENT_ID = '你的ClientID'`，Bash 用 `export LONGBRIDGE_CLIENT_ID='你的ClientID'`。也可在 DSH profile 的 `stock-quotes-plus` 配置项设置 `longbridgeClientId`。重启 DSH 后打开侧栏「数据」。
+1. 在 DSH 打开「插件 → 数据面板 → 面板设置」，点击「登录长桥」。也可以用侧栏「数据」工具栏里的同名按钮。
+2. 在新打开的长桥官方页面完成授权，再回到 DSH。面板会自动刷新行情。若浏览器阻止了新窗口，可点击「打开长桥授权页」。
 
-SDK 在当前系统用户的 `.longbridge/openapi/tokens/<client_id>` 保存并自动刷新令牌。授权命令和 DSH 应以同一个系统用户运行。页面仅调用 DSH 的同源行情接口。
+首次点击时，宿主按[长桥官方流程](https://open.longbridge.com/zh-CN/docs/getting-started#认证方式)注册 OAuth 公开客户端。SDK 在本机存储并刷新令牌。浏览器需要能访问 DSH 宿主的本机回调 `http://localhost:60355/callback`。远程部署时，可通过 SSH 转发该端口，或在宿主机以同一系统用户执行 `npm run authorize -- 你的ClientID`，再设置 `LONGBRIDGE_CLIENT_ID`。已有 `longbridgeClientId` 配置仍然有效。
 
 ## 顶部行情条
 

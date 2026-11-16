@@ -16,7 +16,7 @@
  * @module dsh-stock-quotes
  */
 import { SYMBOL_HELP, createMarketData, formatAmount } from './quotes.js';
-import { AuthorizationRequired, createQuoteContext } from './oauth.js';
+import { AuthorizationRequired, createLongbridgeAuth } from './oauth.js';
 import { registerMarketRoutes } from './market-routes.js';
 
 export const name = 'stock-quotes-plus';
@@ -251,7 +251,8 @@ export function apply(ctx, config = {}) {
   const configured = config !== null && typeof config === 'object' && Array.isArray(config.defaultSymbols)
     ? config.defaultSymbols.filter((entry) => typeof entry === 'string' && entry.trim() !== '')
     : [];
-  const data = createMarketData(createQuoteContext(config?.longbridgeClientId));
+  const auth = createLongbridgeAuth(config?.longbridgeClientId);
+  const data = createMarketData(auth.getContext);
   ctx.tools.register(buildToolDefinition(configured.length > 0 ? configured : FALLBACK_SYMBOLS, data));
-  ctx.inject(['webServer'], (webCtx) => registerMarketRoutes(webCtx, data));
+  ctx.inject(['webServer'], (webCtx) => registerMarketRoutes(webCtx, data, auth));
 }

@@ -25,9 +25,16 @@ window.__ModuleLoader__.load({
 
     const MARKET_API = '/api/dsh-stock-quotes-plus';
 
-    async function marketRequest(path, params, signal) {
+    const AUTH_EVENT = 'dsh-stock-quotes-plus:longbridge-connected';
+
+    async function marketRequest(path, params, signal, method = 'GET') {
       const response = await fetch(MARKET_API + '/' + path + '?' + new URLSearchParams(params), {
-        signal: signal ?? AbortSignal.timeout(15000), cache: 'no-store', headers: { accept: 'application/json' },
+        method,
+        signal: signal ?? AbortSignal.timeout(method === 'POST' ? 35000 : 15000),
+        cache: 'no-store',
+        headers: method === 'POST'
+          ? { accept: 'application/json', 'x-dsh-longbridge-login': '1' }
+          : { accept: 'application/json' },
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
@@ -91,6 +98,13 @@ window.__ModuleLoader__.load({
       'col.amount': '成交额',
       'settings.title': '显示名称',
       'settings.cardTitle': '面板设置',
+      'auth.login': '登录长桥',
+      'auth.starting': '正在打开长桥…',
+      'auth.reopen': '重新打开授权页',
+      'auth.connected': '长桥已授权',
+      'auth.pending': '请在长桥页面完成授权',
+      'auth.failed': '长桥登录失败，请重试。',
+      'auth.open': '打开长桥授权页',
       'settings.cardDesc': '修改侧边栏图标与面板显示的名称；留空则用默认名称。',
       'settings.name': '名称',
       'settings.namePlaceholder': '留空则用默认名称',
@@ -123,6 +137,7 @@ window.__ModuleLoader__.load({
 [data-platform=darwin] .dsq-inner{padding-top:calc(28px + var(--dsh-frame-top-clearance,0px))}
 .dsq-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 4px}
 .dsq-title{margin:0;font-size:20px;font-weight:500;line-height:28px}
+.dsq-auth{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsq-meta{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 .dsq-grow{flex:1 1 auto}
 .dsq-toolbar{display:flex;align-items:center;gap:8px;margin:12px 0 16px;flex-wrap:wrap}
@@ -1183,9 +1198,11 @@ window.__ModuleLoader__.load({
           tick();
           const timer = window.setInterval(tick, refreshMs);
           document.addEventListener('visibilitychange', tick);
+          window.addEventListener(AUTH_EVENT, tick);
           return () => {
             window.clearInterval(timer);
             document.removeEventListener('visibilitychange', tick);
+            window.removeEventListener(AUTH_EVENT, tick);
           };
         }, [key, load, prefs.refreshSeconds]);
 
@@ -1482,6 +1499,91 @@ window.__ModuleLoader__.load({
       });
     }
 
+    function LongbridgeLogin({ t }) {
+      const [status, setStatus] = React.useState({ state: 'checking' });
+      const [link, setLink] = React.useState('');
+      const [starting, setStarting] = React.useState(false);
+      const lastState = React.useRef('checking');
+
+      const update = React.useCallback((next) => {
+        if (next.state === 'connected' && lastState.current !== 'connected') {
+          window.dispatchEvent(new window.Event(AUTH_EVENT));
+        }
+        lastState.current = next.state;
+        setStatus(next);
+        if (next.state !== 'pending') setLink('');
+      }, []);
+
+      React.useEffect(() => {
+        const controller = new AbortController();
+        async function poll() {
+          try {
+            const next = await marketRequest('auth/status', undefined, controller.signal);
+            if (!controller.signal.aborted) update(next);
+          } catch {
+            if (!controller.signal.aborted && lastState.current === 'checking') update({ state: 'idle' });
+          }
+        }
+        void poll();
+        return () => controller.abort();
+      }, [update]);
+
+      React.useEffect(() => {
+        if (status.state !== 'pending') return undefined;
+        let cancelled = false;
+        let timer;
+        const poll = async () => {
+          try {
+            const next = await marketRequest('auth/status');
+            if (cancelled) return;
+            update(next);
+            if (next.state !== 'pending') return;
+          } catch {
+            if (cancelled) return;
+          }
+          timer = window.setTimeout(poll, 2000);
+        };
+        timer = window.setTimeout(poll, 2000);
+        return () => {
+          cancelled = true;
+          window.clearTimeout(timer);
+        };
+      }, [status.state, update]);
+
+      const start = async () => {
+        const popup = window.open('about:blank', '_blank');
+        if (popup) popup.opener = null;
+        setStarting(true);
+        try {
+          const next = await marketRequest('auth/login', undefined, undefined, 'POST');
+          update(next);
+          if (next.state === 'pending' && next.url) {
+            setLink(next.url);
+            if (popup && !popup.closed) popup.location.replace(next.url);
+          } else {
+            popup?.close();
+          }
+        } catch {
+          popup?.close();
+          update({ state: 'failed' });
+        } finally {
+          setStarting(false);
+        }
+      };
+
+      if (status.state === 'connected') {
+        return h('span', { className: 'dsq-meta', role: 'status' }, t('auth.connected'));
+      }
+      return h('div', { className: 'dsq-auth' },
+        h('button', { className: 'dsq-btn', type: 'button', disabled: starting || status.state === 'checking', onClick: start },
+          t(starting ? 'auth.starting' : status.state === 'pending' ? 'auth.reopen' : 'auth.login')),
+        status.state === 'pending' || status.state === 'failed'
+          ? h('span', { className: 'dsq-meta', role: 'status' }, t(status.state === 'pending' ? 'auth.pending' : 'auth.failed'))
+          : null,
+        link === '' ? null : h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, t('auth.open')),
+      );
+    }
+
     /** The行情 page registered under the `main` key `stock-quotes`. */
     function StockQuotesPage(props) {
       const t = translate(props);
@@ -1542,6 +1644,12 @@ window.__ModuleLoader__.load({
           return false;
         }
       }, []);
+
+      React.useEffect(() => {
+        const refresh = () => { void runRefresh(); };
+        window.addEventListener(AUTH_EVENT, refresh);
+        return () => window.removeEventListener(AUTH_EVENT, refresh);
+      }, [runRefresh]);
 
       // Refetch whenever the watchlist changes, and cancel an in-flight request on
       // unmount or replacement so a stale answer never lands in the table.
@@ -2293,6 +2401,7 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'dsq-suggest-name' }, name),
                     h('span', { className: 'dsq-suggest-code' }, spelling))))),
                 h('span', { className: 'dsq-grow' }),
+                h(LongbridgeLogin, { t }),
                 notice === '' ? null : h('span', { className: 'dsq-notice' }, notice),
                 h('button', {
                   type: 'button',
@@ -2566,6 +2675,7 @@ window.__ModuleLoader__.load({
         h('section', { className: 'dsq-card' },
           h('h2', { className: 'dsq-card-title' }, t('settings.cardTitle')),
           h('p', { className: 'dsq-card-desc' }, t('settings.cardDesc')),
+          h(LongbridgeLogin, { t }),
           h(NameSettingForm, { t })));
     }
 
@@ -2630,6 +2740,13 @@ window.__ModuleLoader__.load({
           'col.amount': FALLBACK_TEXT['col.amount'],
           'settings.title': FALLBACK_TEXT['settings.title'],
           'settings.cardTitle': FALLBACK_TEXT['settings.cardTitle'],
+          'auth.login': FALLBACK_TEXT['auth.login'],
+          'auth.starting': FALLBACK_TEXT['auth.starting'],
+          'auth.reopen': FALLBACK_TEXT['auth.reopen'],
+          'auth.connected': FALLBACK_TEXT['auth.connected'],
+          'auth.pending': FALLBACK_TEXT['auth.pending'],
+          'auth.failed': FALLBACK_TEXT['auth.failed'],
+          'auth.open': FALLBACK_TEXT['auth.open'],
           'settings.cardDesc': FALLBACK_TEXT['settings.cardDesc'],
           'settings.name': FALLBACK_TEXT['settings.name'],
           'settings.namePlaceholder': FALLBACK_TEXT['settings.namePlaceholder'],
@@ -2709,6 +2826,13 @@ window.__ModuleLoader__.load({
           'col.amount': 'Turnover',
           'settings.title': 'Display name',
           'settings.cardTitle': 'Panel settings',
+          'auth.login': 'Sign in to Longbridge',
+          'auth.starting': 'Opening Longbridge…',
+          'auth.reopen': 'Reopen authorization',
+          'auth.connected': 'Longbridge authorized',
+          'auth.pending': 'Complete authorization on Longbridge',
+          'auth.failed': 'Longbridge sign-in failed. Try again.',
+          'auth.open': 'Open Longbridge authorization',
           'settings.cardDesc': 'Rename the sidebar entry and the panel heading; leave empty for the default.',
           'settings.name': 'Name',
           'settings.namePlaceholder': 'Empty uses the default',

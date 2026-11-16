@@ -35,11 +35,10 @@ When switching from the upstream panel, uninstall it first to avoid duplicate si
 
 ### Longbridge OAuth 2.0
 
-1. Register a public OAuth client using the [Longbridge getting started guide](https://open.longbridge.com/docs/getting-started). Register `http://localhost:60355/callback` as the redirect URI and save the client ID.
-2. Run `npm ci` in this checkout, then `npm run authorize -- YOUR_CLIENT_ID`. Open the Longbridge URL printed by the command and complete authorization. Market data does not require account or trading scopes.
-3. Start DSH with the same client ID. Set `$env:LONGBRIDGE_CLIENT_ID = 'YOUR_CLIENT_ID'` in PowerShell or `export LONGBRIDGE_CLIENT_ID='YOUR_CLIENT_ID'` in Bash. Alternatively, set `longbridgeClientId` on the `stock-quotes-plus` row in your DSH profile. Restart DSH and open **Data**.
+1. In DSH, open **Plugins → Data panel → Panel settings** and select **Sign in to Longbridge**. The Data toolbar offers the same button.
+2. Complete authorization on the official Longbridge page and return to DSH. The panel refreshes automatically. If the popup is blocked, use **Open Longbridge authorization**.
 
-The SDK stores and refreshes tokens in the system user's `.longbridge/openapi/tokens/<client_id>` directory. Run the authorization command and DSH under the same user. The web client calls the authenticated DSH market data routes.
+The host registers a public OAuth client on the first click using the [official Longbridge flow](https://open.longbridge.com/docs/getting-started). The SDK stores and refreshes tokens locally. The browser must be able to reach the host's loopback callback at `http://localhost:60355/callback`. On a remote deployment, forward that port or run `npm run authorize -- YOUR_CLIENT_ID` on the host under the same system user and set `LONGBRIDGE_CLIENT_ID`. Existing `longbridgeClientId` settings still work.
 
 ## Top stock ticker
 

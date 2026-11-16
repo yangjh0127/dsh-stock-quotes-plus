@@ -7,19 +7,27 @@ function send(response, status, data) {
   response.end(JSON.stringify(data));
 }
 
-export function registerMarketRoutes(ctx, data) {
+export function registerMarketRoutes(ctx, data, auth) {
   const routes = {
     quotes: (params) => data.fetchQuotes(params.getAll('symbol')),
     trend: async (params) => ({ points: await data.fetchTrend(params.get('symbol'), params.get('days') === '5' ? 5 : 1) }),
     catalog: async () => ({ entries: await data.fetchCatalog() }),
   };
+  if (auth) {
+    routes['auth/status'] = () => auth.status();
+    routes['auth/login'] = () => auth.login();
+  }
   for (const [path, run] of Object.entries(routes)) {
+    const method = path === 'auth/login' ? 'POST' : 'GET';
     const handler = async (request, response) => {
       const connection = ctx.get('connection');
       if (!connection) return send(response, 503, { error: 'DSH browser authentication unavailable.' });
       const rejection = connection.requestRejection({ headers: request.headers });
       if (rejection !== undefined) return send(response, rejection, { error: 'Request rejected.' });
-      if (request.method !== 'GET') return send(response, 405, { error: 'GET required.' });
+      if (request.method !== method) return send(response, 405, { error: method + ' required.' });
+      if (method === 'POST' && (!request.headers.origin || request.headers['x-dsh-longbridge-login'] !== '1')) {
+        return send(response, 403, { error: 'Same-origin login request required.' });
+      }
       const params = new URL(request.url, 'http://localhost').searchParams;
       const symbols = params.getAll('symbol');
       if (symbols.length > 500 || symbols.some((symbol) => symbol.length > 64)) {

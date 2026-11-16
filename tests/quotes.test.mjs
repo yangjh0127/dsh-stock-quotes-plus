@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { candidateSymbols, createMarketData, formatAmount } from '../quotes.js';
-import { AuthorizationRequired, createQuoteContext } from '../oauth.js';
+import { AuthorizationRequired, createLongbridgeAuth, createQuoteContext } from '../oauth.js';
 import { registerMarketRoutes } from '../market-routes.js';
 import { buildToolDefinition } from '../index.js';
 
@@ -15,6 +15,27 @@ for (const [input, expected] of Object.entries({
 assert.equal(formatAmount(1e8), '1.00亿');
 assert.equal(formatAmount(undefined), '—');
 await assert.rejects(createQuoteContext('')(), AuthorizationRequired);
+
+let builds = 0;
+let failAuthorization;
+const auth = createLongbridgeAuth('dsh-test-fixture', async (id, onUrl) => {
+  assert.equal(id, 'dsh-test-fixture');
+  builds++;
+  return new Promise((resolve, reject) => {
+    failAuthorization = reject;
+    onUrl('https://openapi.longbridge.com/oauth2/authorize?state=fixture');
+  });
+});
+assert.deepEqual(await auth.status(), { state: 'idle' });
+const [login, duplicate] = await Promise.all([auth.login(), auth.login()]);
+assert.deepEqual(login, duplicate);
+assert.equal(login.state, 'pending');
+assert.equal(builds, 1);
+assert.deepEqual(await auth.status(), { state: 'pending' });
+await assert.rejects(auth.getContext(), AuthorizationRequired);
+failAuthorization(new Error('cancelled'));
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal((await auth.status()).state, 'failed');
 
 let quoteCalls = 0;
 let staticCalls = 0;
@@ -68,17 +89,21 @@ registerMarketRoutes({
   }),
   effect: (callback) => callback(),
   webServer: { register: ({ path, handler }) => handlers.set(path, handler) },
-}, data);
-async function request(path, query, allowed, method = 'GET') {
+}, data, auth);
+async function request(path, query, allowed, method = 'GET', extraHeaders = {}) {
   const url = '/api/dsh-stock-quotes-plus/' + path;
   let status;
   let body;
-  await handlers.get(url)({ url: url + query, method, headers: { allowed } }, {
+  await handlers.get(url)({ url: url + query, method, headers: { allowed, ...extraHeaders } }, {
     writeHead(code) { status = code; },
     end(value) { body = JSON.parse(value); },
   });
   return { status, body };
 }
+assert.equal((await request('auth/login', '', false, 'POST')).status, 401);
+assert.equal((await request('auth/login', '', true)).status, 405);
+assert.equal((await request('auth/login', '', true, 'POST')).status, 403);
+assert.equal((await request('auth/status', '', true)).body.state, 'failed');
 assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', false)).status, 401);
 assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', true, 'POST')).status, 405);
 assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', true)).body.quotes[0].name, '腾讯控股');
