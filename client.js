@@ -19,7 +19,9 @@ window.__ModuleLoader__.load({
     const PKG = 'dsh-stock-quotes-plus';
     const STORAGE_KEY = PKG + '/watchlist';
     const previousStorageNamespace = PKG.replace(/-plus$/, '');
-    const CHART_TTL = 60000;
+    const CHART_TTL = 60_000;
+    const SPARKLINE_TTL = 180_000;
+    const HISTORY_CHART_TTL = 300_000;
     /** At most this many intraday requests in flight at once. */
     const TREND_CONCURRENCY = 4;
     const DEFAULT_SYMBOLS = ['sh000001', 'sh600519', 'sz300750', 'hk00700', 'usAAPL'];
@@ -753,8 +755,9 @@ window.__ModuleLoader__.load({
     let latestQuotes = null;
 
     /** Share a batch and its result between the panel and the top strip. */
-    function refreshQuotes(symbols) {
+    function refreshQuotes(symbols, maxAgeMs = 0) {
       const key = JSON.stringify(symbols);
+      if (latestQuotes?.key === key && Date.now() - latestQuotes.at < maxAgeMs) return Promise.resolve(latestQuotes);
       const pending = pendingQuotes.get(key);
       if (pending !== undefined) return pending;
 
@@ -1090,6 +1093,7 @@ window.__ModuleLoader__.load({
         useEffect(() => {
           const controller = new AbortController();
           const load = async () => {
+            if (document.visibilityState === 'hidden') return;
             try {
               const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
               const points = await fetchTrend(symbol, signal);
@@ -1102,9 +1106,11 @@ window.__ModuleLoader__.load({
           };
           void load();
           const timer = window.setInterval(load, CHART_TTL);
+          document.addEventListener('visibilitychange', load);
           return () => {
             controller.abort();
             window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', load);
           };
         }, [symbol]);
 
@@ -1673,20 +1679,21 @@ window.__ModuleLoader__.load({
       const symbolsRef = React.useRef(symbols);
       symbolsRef.current = symbols;
       const trendsRef = React.useRef({});
+      const scrollRef = React.useRef(null);
       const menuRef = React.useRef(null);
       const headCheckRef = React.useRef(null);
       const noticeTimer = React.useRef(null);
 
-      const runRefresh = React.useCallback(async (signal) => {
+      const runRefresh = React.useCallback(async (signal, maxAgeMs) => {
         const list = symbolsRef.current;
         if (list.length === 0) {
           setView({ status: 'ready', quotes: [], updatedAt: Date.now(), error: '' });
           return true;
         }
         try {
-          const result = await refreshQuotes(list);
+          const result = await refreshQuotes(list, maxAgeMs);
           if (signal?.aborted || JSON.stringify(list) !== JSON.stringify(readWatchlist())) return true;
-          setView({ status: 'ready', quotes: result.quotes, updatedAt: Date.now(), error: '' });
+          setView({ status: 'ready', quotes: result.quotes, updatedAt: result.at ?? Date.now(), error: '' });
           return true;
         } catch (error) {
           if (signal?.aborted || JSON.stringify(list) !== JSON.stringify(readWatchlist())) return true;
@@ -1739,7 +1746,7 @@ window.__ModuleLoader__.load({
         const tick = async () => {
           if (cancelled) return;
           if (document.visibilityState !== 'hidden') {
-            const ok = await runRefresh();
+            const ok = await runRefresh(undefined, refreshMs - 500);
             failuresRef.current = ok ? 0 : Math.min(failuresRef.current + 1, 3);
           }
           if (cancelled) return;
@@ -1752,64 +1759,80 @@ window.__ModuleLoader__.load({
         };
       }, [auto, runRefresh, refreshMs]);
 
-      // Intraday lines, only while the chart column is on. One request per entry,
-      // refreshed at most every CHART_TTL so a 15-second quote tick does not turn
-      // into a burst of history requests.
+      // Fetch mini charts only for rows in the scroll viewport.
       React.useEffect(() => {
-        if (!chart) return undefined;
+        const root = scrollRef.current;
+        if (!chart || !root) return undefined;
+        const visible = new Set();
         let cancelled = false;
+        let loading = false;
+        let timer = null;
         const load = async () => {
+          if (cancelled || loading || document.visibilityState === 'hidden') return;
+          const now = Date.now();
+          const wanted = [...visible].filter((symbol) => now - (trendsRef.current[symbol]?.at ?? 0) >= SPARKLINE_TTL).slice(0, 40);
+          if (wanted.length === 0) return;
+          loading = true;
           try {
-            const wanted = symbolsRef.current.filter((symbol) => {
-              const entry = trendsRef.current[symbol];
-              return entry === undefined || Date.now() - entry.at > CHART_TTL;
-            }).slice(0, 40);
-            if (wanted.length === 0) return;
             const settled = await mapLimit(wanted, TREND_CONCURRENCY, async (symbol) => {
+              if (cancelled || !visible.has(symbol) || document.visibilityState === 'hidden') return null;
               try {
-                const points = await fetchTrend(symbol);
-                return [symbol, points];
+                return [symbol, await fetchTrend(symbol)];
               } catch {
-                return null;
+                return [symbol, trendsRef.current[symbol]?.points ?? []];
               }
             });
             if (cancelled) return;
             const next = { ...trendsRef.current };
-            let changed = false;
             for (const item of settled) {
-              if (item === null) continue;
-              next[item[0]] = { at: Date.now(), points: item[1] };
-              changed = true;
+              if (item !== null) next[item[0]] = { at: Date.now(), points: item[1] };
             }
-            if (!changed) return;
             trendsRef.current = next;
             setTrends(next);
-          } catch (error) {
-            // A failed chart refresh must never take the panel down, and must never
-            // fail silently: the next tick retries, and the console keeps the reason.
-            console.error('[dsh-stock-quotes-plus] intraday refresh failed', error);
+          } finally {
+            loading = false;
           }
         };
-        void load();
-        const id = window.setInterval(() => {
-          if (document.visibilityState === 'hidden') return;
-          void load();
-        }, CHART_TTL);
+        const schedule = () => {
+          if (timer !== null) window.clearTimeout(timer);
+          timer = window.setTimeout(() => { void load(); }, 100);
+        };
+        const observer = typeof window.IntersectionObserver === 'function'
+          ? new window.IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              const symbol = entry.target.dataset.trendSymbol;
+              if (entry.isIntersecting) visible.add(symbol);
+              else visible.delete(symbol);
+            }
+            schedule();
+          }, { root })
+          : null;
+        for (const cell of root.querySelectorAll('[data-trend-symbol]')) {
+          if (observer) observer.observe(cell);
+          else visible.add(cell.dataset.trendSymbol);
+        }
+        if (!observer) schedule();
+        const interval = window.setInterval(load, 5_000);
+        document.addEventListener('visibilitychange', schedule);
         return () => {
           cancelled = true;
-          window.clearInterval(id);
+          observer?.disconnect();
+          document.removeEventListener('visibilitychange', schedule);
+          if (timer !== null) window.clearTimeout(timer);
+          window.clearInterval(interval);
         };
       }, [chart, symbols]);
 
       // The focus chart: one series per (symbol, day count), fetched on demand and
-      // refreshed on the same slow cadence as the sparklines.
+      // refreshed at the cadence of the selected range.
       React.useEffect(() => {
         if (focus === null) return undefined;
+        const ttl = focusDays === 5 ? HISTORY_CHART_TTL : CHART_TTL;
         const key = `${focus}|${focusDays}`;
         let cancelled = false;
         const load = async () => {
           const cached = focusRef.current[key];
-          if (cached !== undefined && Date.now() - cached.at < CHART_TTL) return;
+          if (document.visibilityState === 'hidden' || (cached && Date.now() - cached.at < ttl)) return;
           try {
             const points = await fetchTrend(focus, undefined, focusDays);
             if (cancelled) return;
@@ -1829,9 +1852,11 @@ window.__ModuleLoader__.load({
         const id = window.setInterval(() => {
           if (document.visibilityState === 'hidden') return;
           void load();
-        }, CHART_TTL);
+        }, ttl);
+        document.addEventListener('visibilitychange', load);
         return () => {
           cancelled = true;
+          document.removeEventListener('visibilitychange', load);
           window.clearInterval(id);
         };
       }, [focus, focusDays]);
@@ -2137,6 +2162,7 @@ window.__ModuleLoader__.load({
         // lands: a missing cell would shift every later column in that row.
         return h('div', {
           className: 'dsq-chart',
+          'data-trend-symbol': symbol,
           role: 'cell',
           onPointerMove: (event) => {
             if (points.length < 2) return;
@@ -2434,7 +2460,7 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null,
         h('style', { dangerouslySetInnerHTML: { __html: CSS } }),
         h('div', { className: 'dsq-root', 'data-convention': convention },
-          h('div', { className: 'dsq-scroll' },
+          h('div', { className: 'dsq-scroll', ref: scrollRef },
             h('div', { className: 'dsq-inner' },
               h('div', { className: 'dsq-head' },
                 h('h1', { className: 'dsq-title' }, displayName(t)),

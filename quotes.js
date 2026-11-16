@@ -1,6 +1,7 @@
 import { AdjustType, Market, NaiveDate, Period, TradeSessions } from 'longbridge';
 import { readFile } from 'node:fs/promises';
 import { AuthorizationRequired, createQuoteContext } from './oauth.js';
+import { createMarketCalendar, marketOf } from './market-calendar.js';
 
 export const SYMBOL_HELP =
   'Use Longbridge symbols such as 600519.SH, 300750.SZ, 700.HK AAPL.US or .IXIC.US. '
@@ -130,12 +131,38 @@ async function historicalPoints(context, symbol) {
   return sorted.filter((row) => days.includes(trendDay(row.timestamp, symbol)));
 }
 
-export function createMarketData(getContext = createQuoteContext()) {
+export function createMarketData(getContext = createQuoteContext(), closedKey = createMarketCalendar(getContext)) {
   const metadata = new Map();
+  const quoteCache = new Map();
+  const pendingQuotes = new Map();
   const trends = new Map();
-  const lifetime = 60_000;
   let baseCatalog;
   const listings = new Map();
+
+  function loadQuoteBatch(symbols, phases) {
+    const batch = (async () => {
+      const ctx = await getContext();
+      const rows = new Map((await ctx.quote(symbols)).map((row) => [row.symbol, row]));
+      const at = Date.now();
+      const missing = symbols.filter((symbol) => rows.has(symbol) && !metadata.has(symbol));
+      if (missing.length > 0) {
+        try {
+          for (const info of await ctx.staticInfo(missing)) metadata.set(info.symbol, info);
+        } catch {
+          // A metadata failure does not make the quote unusable.
+        }
+      }
+      for (const symbol of symbols) {
+        if (quoteCache.size >= 4096 && !quoteCache.has(symbol)) quoteCache.delete(quoteCache.keys().next().value);
+        quoteCache.set(symbol, { row: rows.get(symbol), at, phase: phases.get(marketOf(symbol)) });
+      }
+      return { rows, at };
+    })().finally(() => {
+      for (const symbol of symbols) pendingQuotes.delete(symbol);
+    });
+    for (const symbol of symbols) pendingQuotes.set(symbol, batch);
+    return batch;
+  }
 
   async function fetchQuotes(inputs, { signal } = {}) {
     signal?.throwIfAborted();
@@ -143,42 +170,60 @@ export function createMarketData(getContext = createQuoteContext()) {
     const plans = list.map(candidateSymbols);
     const symbols = [...new Set(plans.flat())];
     const rows = new Map();
-    if (symbols.length > 0) {
-      const ctx = await getContext();
-      for (let start = 0; start < symbols.length; start += 500) {
-        signal?.throwIfAborted();
-        const batch = symbols.slice(start, start + 500);
-        for (const row of await ctx.quote(batch)) rows.set(row.symbol, row);
-        const missing = batch.filter((symbol) => rows.has(symbol) && !metadata.has(symbol));
-        if (missing.length) {
-          // Prices remain available even if optional names and share counts fail.
-          try {
-            for (const info of await ctx.staticInfo(missing)) metadata.set(info.symbol, info);
-          } catch {
-            // The next quote can retry static data.
-          }
-        }
+    const pending = new Map();
+    const missing = [];
+    const now = Date.now();
+    const markets = [...new Set(symbols.map(marketOf))];
+    const phases = new Map(await Promise.all(markets.map(async (market) => [market, await closedKey(market, now)])));
+    signal?.throwIfAborted();
+    for (const symbol of symbols) {
+      const cached = quoteCache.get(symbol);
+      const phase = phases.get(marketOf(symbol));
+      if (cached && cached.phase === phase && (phase !== undefined || now - cached.at < (cached.row ? 2_000 : 30_000))) {
+        rows.set(symbol, cached);
       }
+      else if (pendingQuotes.has(symbol)) pending.set(symbol, pendingQuotes.get(symbol));
+      else missing.push(symbol);
     }
+    for (let start = 0; start < missing.length; start += 500) {
+      const symbols = missing.slice(start, start + 500);
+      const batch = loadQuoteBatch(symbols, phases);
+      for (const symbol of symbols) pending.set(symbol, batch);
+    }
+    await Promise.all([...pending].map(async ([symbol, batch]) => {
+      const { rows: batchRows, at } = await batch;
+      rows.set(symbol, { row: batchRows.get(symbol), at });
+    }));
     signal?.throwIfAborted();
     const quotes = [];
     const unresolved = [];
+    let asOf = Infinity;
     for (const [index, spelling] of list.entries()) {
-      const symbol = plans[index].find((candidate) => rows.has(candidate));
+      const symbol = plans[index].find((candidate) => rows.get(candidate)?.row);
       if (symbol === undefined) unresolved.push(spelling);
-      else quotes.push(normalizeQuote(rows.get(symbol), metadata.get(symbol), spelling));
+      else {
+        const { row, at } = rows.get(symbol);
+        quotes.push(normalizeQuote(row, metadata.get(symbol), spelling));
+        asOf = Math.min(asOf, at);
+      }
     }
-    return { quotes, unresolved, asOf: new Date().toISOString() };
+    return { quotes, unresolved, asOf: new Date(asOf === Infinity ? Date.now() : asOf).toISOString() };
   }
 
   async function fetchTrend(input, days) {
+    const lifetime = days === 5 ? 300_000 : 60_000;
+    const phases = new Map();
     for (const symbol of candidateSymbols(input)) {
+      const market = marketOf(symbol);
+      if (!phases.has(market)) phases.set(market, await closedKey(market));
+      const phase = phases.get(market);
       const key = symbol + ':' + days;
       let entry = trends.get(key);
-      if (!entry || Date.now() - entry.at >= lifetime) {
+      if (!entry || (entry.at !== undefined && (entry.phase !== phase || (phase === undefined && Date.now() - entry.at >= lifetime)))) {
         if (trends.size >= 512) trends.delete(trends.keys().next().value);
         entry = {
-          at: Date.now(),
+          at: undefined,
+          phase,
           points: (async () => {
             const ctx = await getContext();
             try {
@@ -194,6 +239,7 @@ export function createMarketData(getContext = createQuoteContext()) {
       }
       try {
         const points = await entry.points;
+        entry.at ??= Date.now();
         if (points.length > 0) return points;
       } catch (error) {
         if (trends.get(key) === entry) trends.delete(key);

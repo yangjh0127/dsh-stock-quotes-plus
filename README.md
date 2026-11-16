@@ -43,6 +43,8 @@ plugin_manager action: install_bundle target: <仓库的绝对路径>
 
 北交所标的可从随插件附带的索引搜索。长桥未返回报价时，面板会显示「暂无长桥报价」。各市场的实时性取决于账号的 [OpenAPI 行情权限](https://open.longbridge.com/zh-CN/docs/quote/overview)。
 
+休市时，DSH 宿主会复用各市场的最后一份报价和分时数据，进入下一交易时段后恢复刷新。港股和 A 股的午休也适用。表格小图只为当前可见行加载，近 5 日走势最多每 5 分钟刷新一次。
+
 ## 更新与许可证
 
 更新工作副本后重新安装插件并刷新 DSH。变更记录见 [CHANGELOG.md](CHANGELOG.md)。

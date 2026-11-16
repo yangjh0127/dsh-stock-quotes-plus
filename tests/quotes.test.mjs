@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createMarketCalendar, marketOf } from '../market-calendar.js';
 import { candidateSymbols, createMarketData, formatAmount } from '../quotes.js';
 import { AuthorizationRequired, createLongbridgeAuth, createQuoteContext } from '../oauth.js';
 import { registerMarketRoutes } from '../market-routes.js';
@@ -85,13 +86,77 @@ assert.equal(result.quotes[0].change, 10);
 assert.equal(result.quotes[0].changePct, 2.56410256);
 assert.equal(result.quotes[0].marketCap, 400000);
 await data.fetchQuotes(['hk00700', 'AAPL']);
-assert.equal(quoteCalls, 2);
+assert.equal(quoteCalls, 1);
 assert.equal(staticCalls, 1);
 await assert.rejects(data.fetchQuotes(['AAPL'], { signal: AbortSignal.abort() }), { name: 'AbortError' });
 assert.deepEqual(await data.fetchTrend('AAPL', 1), [{ day: '2026-11-16', t: '05:00', v: 200.5, vol: 18, avg: 201 }]);
 await data.fetchTrend('AAPL.US', 1);
 assert.equal(trendCalls, 1);
 assert.deepEqual(await data.fetchTrend('hk00700', 5), [{ day: '2026-11-16', t: '10:00', v: 380, vol: 100, avg: undefined }]);
+
+const batches = [];
+let finishFirst;
+const coalesced = createMarketData(async () => ({
+  async quote(symbols) {
+    batches.push(symbols);
+    if (symbols.includes('700.HK')) await new Promise((resolve) => { finishFirst = resolve; });
+    return symbols.map((symbol) => ({ symbol, lastDone: '123' }));
+  },
+  async staticInfo() { return []; },
+}));
+const first = coalesced.fetchQuotes(['hk00700', 'AAPL']);
+const second = coalesced.fetchQuotes(['AAPL.US', '700.HK', '600519.SH']);
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(batches, [['700.HK', 'AAPL.US'], ['600519.SH']]);
+finishFirst();
+assert.deepEqual((await first).quotes.map((quote) => quote.symbol), ['hk00700', 'AAPL']);
+assert.deepEqual((await second).quotes.map((quote) => quote.symbol), ['AAPL.US', '700.HK', '600519.SH']);
+await coalesced.fetchQuotes(['600519.SH', '00700']);
+assert.equal(batches.length, 2);
+
+let calendarCalls = 0;
+const probeCalendar = createMarketCalendar(async () => ({
+  async tradingDays() {
+    calendarCalls++;
+    return { tradingDays: ['2026-11-12', '2026-11-13', '2026-11-16'], halfTradingDays: ['2026-11-17'] };
+  },
+}));
+const cnMarket = marketOf('600519.SH');
+const usMarket = marketOf('AAPL.US');
+assert.equal(await probeCalendar(cnMarket, Date.parse('2026-11-13T04:01:00Z')), '2026-11-13:break');
+assert.equal(await probeCalendar(cnMarket, Date.parse('2026-11-13T05:01:00Z')), undefined);
+assert.equal(await probeCalendar(cnMarket, Date.parse('2026-11-14T02:00:00Z')), '2026-11-13:close');
+assert.equal(await probeCalendar(cnMarket, Date.parse('2026-11-16T00:30:00Z')), '2026-11-13:close');
+assert.equal(await probeCalendar(cnMarket, Date.parse('2026-11-16T01:30:00Z')), undefined);
+assert.equal(await probeCalendar(usMarket, Date.parse('2026-11-17T17:00:00Z')), undefined);
+assert.equal(await probeCalendar(usMarket, Date.parse('2026-11-17T18:01:00Z')), '2026-11-17:close');
+assert.equal(calendarCalls, 2);
+
+let phase;
+const closedBatches = [];
+let closedTrendCalls = 0;
+const sessionData = createMarketData(async () => ({
+  async quote(symbols) {
+    closedBatches.push(symbols);
+    return symbols.map((symbol) => ({ symbol, lastDone: '10' }));
+  },
+  async staticInfo() { return []; },
+  async intraday() { closedTrendCalls++; return []; },
+}), async (market) => market === cnMarket ? phase : undefined);
+await sessionData.fetchQuotes(['600519.SH', 'AAPL']);
+await sessionData.fetchTrend('600519.SH', 1);
+phase = '2026-11-13:close';
+await sessionData.fetchQuotes(['600519.SH', 'AAPL']);
+await sessionData.fetchQuotes(['600519.SH']);
+await sessionData.fetchTrend('600519.SH', 1);
+await sessionData.fetchTrend('600519.SH', 1);
+assert.deepEqual(closedBatches, [['600519.SH', 'AAPL.US'], ['600519.SH']]);
+assert.equal(closedTrendCalls, 2);
+phase = undefined;
+await sessionData.fetchQuotes(['600519.SH']);
+await sessionData.fetchTrend('600519.SH', 1);
+assert.equal(closedBatches.length, 3);
+assert.equal(closedTrendCalls, 3);
 
 const handlers = new Map();
 registerMarketRoutes({

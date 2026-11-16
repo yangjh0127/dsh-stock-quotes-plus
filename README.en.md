@@ -43,6 +43,8 @@ Local sign-in uses `http://localhost:60355/callback`. For a remote host, forward
 
 The bundled index makes Beijing Exchange symbols searchable. The panel shows when Longbridge has no quote for a symbol. Quote delays depend on [OpenAPI market data permissions](https://open.longbridge.com/docs/quote/overview).
 
+The DSH host reuses the last quote and intraday series while each market is closed and resumes fetching at the next trading session. This includes the Hong Kong and mainland lunch breaks. The panel loads mini charts for visible rows, and the five-session chart refreshes at most once every five minutes.
+
 ## Updates and licensing
 
 Update the checkout, reinstall the plugin and refresh DSH. See the [changelog](CHANGELOG.md).
