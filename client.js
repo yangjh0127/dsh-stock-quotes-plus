@@ -21,7 +21,6 @@ window.__ModuleLoader__.load({
     const previousStorageNamespace = PKG.replace(/-plus$/, '');
     const CHART_TTL = 60_000;
     const SPARKLINE_TTL = 180_000;
-    const HISTORY_CHART_TTL = 300_000;
     /** At most this many intraday requests in flight at once. */
     const TREND_CONCURRENCY = 4;
     const DEFAULT_SYMBOLS = ['sh000001', 'sh600519', 'sz300750', 'hk00700', 'usAAPL'];
@@ -1823,24 +1822,24 @@ window.__ModuleLoader__.load({
         };
       }, [chart, symbols]);
 
-      // The focus chart: one series per (symbol, day count), fetched on demand and
-      // refreshed at the cadence of the selected range.
+      // Five-session charts load only when selected. The host decides whether
+      // to return a cached market-session snapshot.
       React.useEffect(() => {
         if (focus === null) return undefined;
-        const ttl = focusDays === 5 ? HISTORY_CHART_TTL : CHART_TTL;
         const key = `${focus}|${focusDays}`;
-        let cancelled = false;
+        const controller = new AbortController();
         const load = async () => {
           const cached = focusRef.current[key];
-          if (document.visibilityState === 'hidden' || (cached && Date.now() - cached.at < ttl)) return;
+          if (focusDays === 1 && (document.visibilityState === 'hidden' || (cached && Date.now() - cached.at < CHART_TTL))) return;
           try {
-            const points = await fetchTrend(focus, undefined, focusDays);
-            if (cancelled) return;
+            const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+            const points = await fetchTrend(focus, signal, focusDays);
+            if (controller.signal.aborted) return;
             const next = { ...focusRef.current, [key]: { at: Date.now(), points } };
             focusRef.current = next;
             setFocusSeries(next);
           } catch (error) {
-            if (!cancelled) {
+            if (!controller.signal.aborted) {
               setFocusSeries((previous) => ({
                 ...previous,
                 [key]: { points: previous[key]?.points ?? [], error: describeError(error) },
@@ -1849,13 +1848,11 @@ window.__ModuleLoader__.load({
           }
         };
         void load();
-        const id = window.setInterval(() => {
-          if (document.visibilityState === 'hidden') return;
-          void load();
-        }, ttl);
+        if (focusDays === 5) return () => controller.abort();
+        const id = window.setInterval(load, CHART_TTL);
         document.addEventListener('visibilitychange', load);
         return () => {
-          cancelled = true;
+          controller.abort();
           document.removeEventListener('visibilitychange', load);
           window.clearInterval(id);
         };
@@ -2308,6 +2305,7 @@ window.__ModuleLoader__.load({
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               setHover(null);
+              setFocusDays(1);
               setFocus((previous) => (previous === symbol ? null : symbol));
             } else if (event.key === 'Escape') {
               setFocus(null);
@@ -2332,6 +2330,7 @@ window.__ModuleLoader__.load({
             const target = event === null || event === undefined ? null : event.target;
             if (target !== null && typeof target.closest === 'function' && target.closest('input,button,a') !== null) return;
             setHover(null);
+            setFocusDays(1);
             setFocus((previous) => (previous === symbol ? null : symbol));
           },
         },

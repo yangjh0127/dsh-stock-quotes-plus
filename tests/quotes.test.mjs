@@ -135,6 +135,7 @@ assert.equal(calendarCalls, 2);
 let phase;
 const closedBatches = [];
 let closedTrendCalls = 0;
+let historyCalls = 0;
 const sessionData = createMarketData(async () => ({
   async quote(symbols) {
     closedBatches.push(symbols);
@@ -142,6 +143,10 @@ const sessionData = createMarketData(async () => ({
   },
   async staticInfo() { return []; },
   async intraday() { closedTrendCalls++; return []; },
+  async historyCandlesticksByDate() {
+    historyCalls++;
+    return [{ close: '10', timestamp: new Date('2026-11-13T02:00:00Z') }];
+  },
 }), async (market) => market === cnMarket ? phase : undefined);
 await sessionData.fetchQuotes(['600519.SH', 'AAPL']);
 await sessionData.fetchTrend('600519.SH', 1);
@@ -157,6 +162,13 @@ await sessionData.fetchQuotes(['600519.SH']);
 await sessionData.fetchTrend('600519.SH', 1);
 assert.equal(closedBatches.length, 3);
 assert.equal(closedTrendCalls, 3);
+assert.equal(historyCalls, 0);
+for (const phaseKey of ['2026-11-13:break', '2026-11-13:close', undefined]) {
+  phase = phaseKey;
+  const snapshot = await sessionData.fetchTrend('600519.SH', 5);
+  assert.deepEqual(await sessionData.fetchTrend('sh600519', 5), snapshot);
+}
+assert.equal(historyCalls, 3);
 
 const handlers = new Map();
 registerMarketRoutes({
