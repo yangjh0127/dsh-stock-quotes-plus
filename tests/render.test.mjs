@@ -28,7 +28,7 @@ check('render returns one text block', tool.output.render({}, { quotes: [], unre
 
 const VALUE = {
   asOf: '2026-01-01T00:00:00.000Z',
-  source: '\u4e1c\u65b9\u8d22\u5bcc (Eastmoney)',
+  source: '\u957f\u6865 (Longbridge)',
   quotes: [
     { symbol: 'sh600519', code: '600519', name: 'MAOTAI', market: 'SH', price: 1319.9, change: 6.93, changePct: 0.53, open: 1311.57, high: 1321.97, low: 1301.68, preClose: 1312.97, amount: 2020261861 },
     { symbol: 'usAAPL', code: 'AAPL', name: 'APPLE', market: 'NASDAQ', price: 342, change: -0.96, changePct: -0.28, open: 346.085, high: 347.82, low: 340.46, amount: 13667892736 },
@@ -40,7 +40,7 @@ const rendered = renderQuotes(VALUE);
 console.log('\n' + rendered + '\n');
 
 console.log('--- rendered text ---');
-check('header names the source', rendered.split('\n')[0].includes('Eastmoney'), true);
+check('header names the source', rendered.split('\n')[0].includes('Longbridge'), true);
 check('price uses two decimals', rendered.includes('1319.90'), true);
 check('round numbers still show two decimals', rendered.includes('342.00'), true);
 check('change is signed', rendered.includes('+6.93'), true);
@@ -63,7 +63,7 @@ check('absent price renders a dash', blank.includes('Y (usY \u00b7 NYSE) \u2014'
 check('absent price keeps no change block', blank.includes('\u25b2') || blank.includes('\u25bc'), false);
 
 console.log('--- degenerate input ---');
-check('empty value still renders a header', renderQuotes({}).split('\n')[0].includes('Eastmoney'), true);
+check('empty value still renders a header', renderQuotes({}).split('\n')[0].includes('Longbridge'), true);
 check('null value does not throw', typeof renderQuotes(null), 'string');
 check('empty quotes say so', renderQuotes({ quotes: [] }).includes('\u6ca1\u6709\u53d6\u5230'), true);
 

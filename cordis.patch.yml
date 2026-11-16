@@ -11,6 +11,8 @@
     - id: stock-quotes-plus
       name: 'dsh-stock-quotes-plus'
       config:
+        # Optional: longbridgeClientId: '<OAuth public client ID>'
+        # Defaults to LONGBRIDGE_CLIENT_ID from the DSH host environment.
         defaultSymbols:
           - sh000001
           - sh600519

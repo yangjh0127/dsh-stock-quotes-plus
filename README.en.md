@@ -15,7 +15,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin tha
 ## Requirements
 
 - DeepSeek Harness (0.2.x, with the `plugin_manager` tool)
-- No API key, no extra dependencies. The Host half imports nothing outside its own package.
+- Node.js 20+ and an OpenAPI-enabled Longbridge account with quote permissions.
 
 ## Install
 
@@ -33,11 +33,19 @@ plugin_manager  action: install_bundle  target: <absolute-path>/dsh-stock-quotes
 
 When switching from the upstream panel, uninstall it first to avoid duplicate sidebar and stock_quote registrations. Existing browser watchlists and panel preferences carry over.
 
+### Longbridge OAuth 2.0
+
+1. Register a public OAuth client using the [Longbridge getting started guide](https://open.longbridge.com/docs/getting-started). Register `http://localhost:60355/callback` as the redirect URI and save the client ID.
+2. Run `npm ci` in this checkout, then `npm run authorize -- YOUR_CLIENT_ID`. Open the Longbridge URL printed by the command and complete authorization. Market data does not require account or trading scopes.
+3. Start DSH with the same client ID. Set `$env:LONGBRIDGE_CLIENT_ID = 'YOUR_CLIENT_ID'` in PowerShell or `export LONGBRIDGE_CLIENT_ID='YOUR_CLIENT_ID'` in Bash. Alternatively, set `longbridgeClientId` on the `stock-quotes-plus` row in your DSH profile. Restart DSH and open **Data**.
+
+The SDK stores and refreshes tokens in the system user's `.longbridge/openapi/tokens/<client_id>` directory. Run the authorization command and DSH under the same user. The web client calls the authenticated DSH market data routes.
+
 ## Top stock ticker
 
 In DSH Web, open **Data** in the sidebar and select **Show top stock ticker** in its toolbar. The same option is available in the bundle settings. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
 
-The ticker shares the panel's Eastmoney quotes, watchlist order, refresh interval, up/down colors and price-move threshold. Add, remove or reorder stocks in the panel to update the ticker. Click a quote to view details.
+The ticker shares the panel's Longbridge quotes, watchlist order, refresh interval, up/down colors and price-move threshold. Add, remove or reorder stocks in the panel to update the ticker. Click a quote to view details.
 
 Based on [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes), with a ticker adapted from [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker). See [LICENSE](LICENSE) and [LICENSE-ticker](LICENSE-ticker).
 
@@ -45,7 +53,7 @@ Based on [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quote
 
 | Action | How |
 |---|---|
-| Add | Type a symbol or board name in the top input, press Enter |
+| Add | Type a symbol or security name in the top input, press Enter |
 | **Delete** | **Right-click a row** → menu → Delete (there is no per-row ✕ button) |
 | **Reorder** | Drag the ⠿ handle; a brand-colored line shows the drop position — or use the right-click menu's move items |
 | **Multi-select** | Checkbox on each row; the header checkbox selects / clears everything |
@@ -61,8 +69,8 @@ Order and membership persist in the browser (`localStorage`, key `dsh-stock-quot
 
 The **Charts** button in the toolbar toggles a per-row **intraday line** (today's session). The choice is stored in `localStorage` (`chart` in `dsh-stock-quotes/prefs`) and is **on by default**.
 
-- Data comes from Eastmoney's intraday endpoint; A-shares, Hong Kong, US and boards all work (US shows the latest session)
-- **The x axis is the whole session, not the data stretched to fill the box**: A-shares / Beijing / boards are 240 minutes (09:30–11:30, 13:00–15:00), Hong Kong 330 (09:30–12:00, 13:00–16:00), US 390 (21:30–04:00 Beijing time). At 11:30 the line therefore stops half way and the blank right side is the part that has not traded yet; it only fills at the close
+- The current session uses Longbridge intraday data. The five-session view uses Longbridge one-minute candles.
+- **The x axis is the whole session, not the data stretched to fill the box**: A-shares are 240 minutes (09:30–11:30, 13:00–15:00), Hong Kong 330 (09:30–12:00, 13:00–16:00), US 390 (21:30–04:00 Beijing time). At 11:30 the line therefore stops half way and the blank right side is the part that has not traded yet; it only fills at the close
 - Refreshed every 60 seconds, deliberately not tied to the 15-second quote tick, so it cannot become a request storm
 - Colour follows the day's move — red up, green down, neutral when flat — matching the number columns
 - With charts off, **no trend request is made**; only the numbers remain
@@ -112,52 +120,9 @@ Preferences live in `localStorage` under `dsh-stock-quotes/prefs`.
 
 **Ambiguous bare six-digit codes**: both markets are tried and the first that answers wins. So `000300` (沪深300, Shanghai only) falls through to `1.000300`, while `000001` exists on both and defaults to Shenzhen (平安银行) — write `sh000001` or `000001.SH` for the Shanghai index. An explicit prefix or suffix is authoritative and never falls back, so a wrong market reports "not found" rather than silently picking another listing.
 
-## Boards (板块)
+## Symbols and search
 
-Eastmoney's industry and concept boards come through the same quote endpoint, and the panel can add them directly:
-
-| Spelling | Examples |
-|---|---|
-| Eastmoney board code | `BK1036` (半导体), `BK0891` (国产芯片) |
-| **Board name** (panel only) | type `半导体`, `白酒`, `存储芯片` — exact name match first, then a unique substring match |
-| Raw secid | `90.BK1036` |
-
-Three things to know:
-
-1. **同花顺's board codes (`88xxxx`, e.g. `881121`) are a proprietary encoding with no public mapping**, so they cannot be added as-is — use the name or the Eastmoney code instead: `881121` is 半导体, so type `半导体` or `BK1036`.
-2. The two sources have **different constituents and weights**, so the index level and change will differ (measured at the same moment: Eastmoney 半导体 `+3.47%`, 同花顺 `+3.25%`). Matching 同花顺 exactly is not possible.
-3. Name lookup happens in the panel only; `stock_quote` takes the code, e.g. `BK1036`.
-
-## Search (add by name)
-
-You do not need to know the code — typing in the input pops suggestions (name + canonical code) and one click adds the entry:
-
-| Typed | Suggestions |
-|---|---|
-| `茅台` | 贵州茅台 `sh600519` |
-| `半导体` | 半导体 `BK1036` (plus 半导体材料 `BK1325` and others) |
-| `BK13` | 半导体材料 `BK1325` |
-| `600519` | added directly (an exact code wins, no picking needed) |
-
-Ranking: exact name → name prefix → name substring → code prefix.
-
-The suggestions come from `data/securities.json` in this repository (~11k rows: A-shares, indices, Hong Kong, industry and concept boards). The panel fetches it once from jsDelivr (the npm package version first, then the git tag) / raw.githubusercontent and caches it for a day. The file is generated:
-
-```bash
-node scripts/build-index.mjs   # needs access to push2.eastmoney.com
-```
-
-Re-run and commit after new listings appear. When the index cannot be fetched (offline, blocked), adding by code and by board name still works.
-
-## Coverage
-
-The data comes from Eastmoney's public quote endpoint, so what you can add is what it covers:
-
-- ✅ A-shares, Beijing, Hong Kong, US, indices, ETFs / LOFs, convertible bonds, B-shares, boards (`BKxxxx`)
-- ❌ Delisted or retired codes (e.g. `110043`), off-exchange fund NAVs, futures, options, FX
-- ❌ Chinese stock-name search: not supported (the public search endpoints send no CORS header, so the browser cannot read them) — use a code; board names are the exception, see above
-
-If a code you can see in 同花顺 does not resolve, try it with its full suffix (`600519.SH`); if that still fails, the data source does not carry it.
+Use Longbridge symbols such as `600519.SH`, `300750.SZ`, `700.HK` and `AAPL.US`. Existing entries such as `sh600519`, `hk00700` and `116.00700` still resolve. Suggestions come from a bundled name index. Quotes are read from Longbridge using the mapped symbols. Other symbols can be entered by code, subject to coverage and account permissions. Eastmoney's proprietary `BKxxxx` boards have no direct mapping.
 
 ## Configuration
 
@@ -184,7 +149,7 @@ The panel keeps its own watchlist in the browser, independently of this list: th
 |---|---|
 | `package.json` | Bundle manifest: `dsh.bundle.patch` inserts the Host row, `dsh.client` makes the Web app load the browser half |
 | `cordis.patch.yml` | Loader patch: inserts the `stock-quotes` row with the default watchlist |
-| `index.js` | Host half: registers `stock_quote` as a raw `ToolDefinition` (no imports outside the package) |
+| `index.js` | Host half: registers `stock_quote` as a raw `ToolDefinition` and mounts the same-origin quote routes |
 | `quotes.js` | Pure data layer: symbol resolution, batched fetch, formatting |
 | `client.js` | Browser half: `main` panel, `plugins.bundle.config` settings card, `sidebar.panellist` icon |
 | `locale/{zh,en}.json` | Plugin-manager card title and description |
@@ -206,13 +171,13 @@ npm test
 
 The Host half's full contract check needs packages from a DeepSeek Harness installation, so it is kept out of this repo.
 
-- `tests/meta.test.mjs` — release consistency: the version matches the index version pinned in the code, the changelog has an entry for it, `files` covers what must ship, there are no runtime dependencies, and the index is well formed.
+- `tests/meta.test.mjs` — release consistency: checks the version, changelog, packaged files and official Longbridge SDK dependency.
 
 Releases are cut by pushing a `v*` tag, which publishes with provenance — see [RELEASING.md](RELEASING.md).
 
 ## Stability, data source and disclaimer
 
-- Quotes come from **Eastmoney's public endpoints** (`push2` / `push2his`). They are **unofficial, unauthorised and carry no SLA**: they may rate-limit, change fields or disappear. The plugin backs off and degrades gracefully on HTTP errors, but cannot promise availability.
+- Market data coverage and delay depend on your Longbridge OpenAPI permissions.
 - The search index is a snapshot generated in this repository (`data/securities.json`) and fetched from a CDN **pinned to the released version** (the npm package and the git tag carry the same version). Re-run `node scripts/build-index.mjs` and release when new listings appear.
 - Data **may be delayed or wrong**. This plugin is for looking at prices only: it is **not investment advice** and **must not be used for trading decisions**. Any loss from using it is the user's own.
 - The plugin collects and reports nothing; the watchlist and settings stay in the browser's `localStorage`.

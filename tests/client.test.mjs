@@ -93,7 +93,7 @@ check('module injects slots+locale', mod.inject, ['slots', 'locale']);
 check('module exports apply', typeof mod.apply, 'function');
 
 // --- pure list transforms --------------------------------------------------
-const { reorderList, moveNextTo, candidateSecids: clientResolver } = mod.internals;
+const { reorderList, moveNextTo, candidateSymbols: clientResolver } = mod.internals;
 check('top', reorderList(['a', 'b', 'c'], ['c'], 'top'), ['c', 'a', 'b']);
 check('bottom', reorderList(['a', 'b', 'c'], ['a'], 'bottom'), ['b', 'c', 'a']);
 check('up single', reorderList(['a', 'b', 'c'], ['b'], 'up'), ['b', 'a', 'c']);
@@ -117,7 +117,7 @@ check('unknown drop target is a no-op', moveNextTo(['a', 'b'], ['a'], 'zz', fals
 // The browser half cannot import quotes.js, so it carries a copy of the rules.
 // Drift between the copies would make the panel and the tool disagree about
 // what a spelling means, so compare them on everything people actually type.
-const { candidateSecids: hostResolver } = await import('../quotes.js');
+const { candidateSymbols: hostResolver } = await import('../quotes.js');
 const SPELLINGS = [
   '600519', '000001', '300750', '688981', '430047', '830799', '920001', '900901', '200002',
   '000300', '000688', '000905', '510300', '159915', '161725', '128136',
@@ -208,7 +208,7 @@ check('x follows the session clock', seriesXAt(series([['09:30', 1], ['11:30', 2
 check('x falls back to the index without a session', seriesXAt(series([['09:30', 1], ['11:30', 2]]), 1).toFixed(1), '88.0');
 
 // --- the focus chart -------------------------------------------------------
-const { focusGeometry, nearestIndex, xAxisTicks, formatLots } = mod.internals;
+const { focusGeometry, nearestIndex, xAxisTicks, formatVolume } = mod.internals;
 const CN_DAY = [
   { day: '2026-10-21', t: '09:30', v: 100, avg: 100, vol: 10 },
   { day: '2026-10-21', t: '10:30', v: 120, avg: 110, vol: 20 },
@@ -242,9 +242,9 @@ check('nearest index at half a session', nearestIndex(CN_DAY, 0.5, 'cn', 1), 2);
 check('nearest index clamps past the close', nearestIndex(CN_DAY, 1, 'cn', 1), 2);
 check('nearest index for multi-day walks the series', nearestIndex(FIVE_DAYS, 0.5, 'cn', 5), 2);
 check('an empty series has no nearest index', nearestIndex([], 0.5, 'cn', 1), -1);
-check('lots are humanised', formatLots(123456), '12.35万手');
-check('small lots stay raw', formatLots(43), '43手');
-check('missing lots render a dash', formatLots(undefined), '—');
+check('lots are humanised', formatVolume(123456), '12.35万股');
+check('small lots stay raw', formatVolume(43), '43股');
+check('missing lots render a dash', formatVolume(undefined), '—');
 
 // --- sorting and preferences ----------------------------------------------
 const { sortSymbols, normalisePrefs } = mod.internals;

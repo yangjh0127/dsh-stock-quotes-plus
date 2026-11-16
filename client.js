@@ -5,9 +5,7 @@
  *   - the行情 page in the layout's `main` keyed slot under the key `stock-quotes`;
  *   - its sidebar icon in `sidebar.panellist`, whose id addresses that same key.
  *
- * The page reads quotes straight from the public Eastmoney endpoint: it is JSON,
- * key-free and CORS-permissive, so no Host plumbing is needed for the visual half.
- * The symbol rules and quote shape mirror the Host half's `quotes.js`.
+ * Market data comes from the DSH host, which owns the Longbridge OAuth session.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-stock-quotes-plus',
@@ -25,26 +23,33 @@ window.__ModuleLoader__.load({
     const TREND_CONCURRENCY = 4;
     const DEFAULT_SYMBOLS = ['sh000001', 'sh600519', 'sz300750', 'hk00700', 'usAAPL'];
 
-    const BATCH_ENDPOINT = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
-    const BATCH_FIELDS = 'f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18';
-    const US_MARKETS = [105, 106, 107];
+    const MARKET_API = '/api/dsh-stock-quotes-plus';
+
+    async function marketRequest(path, params, signal) {
+      const response = await fetch(MARKET_API + '/' + path + '?' + new URLSearchParams(params), {
+        signal: signal ?? AbortSignal.timeout(15000), cache: 'no-store', headers: { accept: 'application/json' },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || 'HTTP ' + response.status);
+      }
+      return response.json();
+    }
 
     const FALLBACK_TEXT = {
       'panel.defaultLabel': '数据',
       'panel.auto': '自动刷新',
       'panel.refresh': '刷新',
       'panel.add': '添加',
-      'panel.placeholder': '代码或板块名，如 600519、半导体、00700',
-      'panel.empty': '自选股为空。在上面输入代码或板块名后回车即可添加。',
-      'panel.notFound': '未找到该代码或板块',
-      'panel.resolving': '查询板块…',
-      'panel.thsBoardCode': '同花顺板块码无法直接使用，请输入板块名称（如 半导体）或东财代码 BK1036',
+      'panel.placeholder': '代码或证券名称，如 600519、腾讯、AAPL',
+      'panel.empty': '自选股为空。在上面输入代码或证券名称后回车即可添加。',
+      'panel.notFound': '未找到该证券代码或名称',
       'panel.loading': '加载中…',
       'panel.error': '行情获取失败',
       'panel.retry': '重试',
       'panel.unresolved': '未找到',
       'panel.convention': '红涨绿跌',
-      'panel.source': '数据源：东方财富',
+      'panel.source': '数据源：长桥',
       'panel.drag': '拖动排序',
       'panel.chart': '曲线',
       'panel.alert': '异动提醒 超过',
@@ -201,147 +206,42 @@ window.__ModuleLoader__.load({
 .dsq-card-desc{margin:0 0 4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 `;
 
-    /** Pad a Hong Kong code to five digits. */
-    function hkCode(body) {
-      const digits = body.replace(/^0+/, '');
-      return digits === '' ? '00000' : digits.padStart(5, '0');
-    }
+    // Keep accepted spellings in sync with the host rules.
+    const ALIASES = { SS: 'SH', O: 'US', N: 'US', A: 'US' };
+    const LEGACY_MARKETS = { 1: 'SH', 116: 'HK', 105: 'US', 106: 'US', 107: 'US' };
+    const CHINA_MARKETS = ['SH', 'SZ', 'BJ'];
+    const isBeijing = (code) => /^(?:[48]|92)/.test(code);
 
-    /** Secids for one market: 1 = Shanghai, 0 = Shenzhen/Beijing, 116 = HK, 105-107 = US. */
-    function secidsForMarket(market, body) {
-      if (market === 'sh') return [`1.${body}`];
-      if (market === 'sz' || market === 'bj') return [`0.${body}`];
-      if (market === 'hk') return [`116.${hkCode(body)}`];
-      if (market === 'us') return US_MARKETS.map((secidMarket) => `${secidMarket}.${body}`);
+    function marketSymbol(code, market) {
+      if (market === 'HK' && /^\d{1,5}$/.test(code)) return [Number(code) + '.HK'];
+      if (CHINA_MARKETS.includes(market) && /^\d{6}$/.test(code)) return [code + '.' + market];
+      if (market === 'US' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
+        return [code + '.US'];
+      }
       return [];
     }
 
-    /** Exchange suffixes seen in exports from 同花顺 / 通达信 / Yahoo. */
-    const SUFFIX_MARKETS = {
-      SH: 'sh', SS: 'sh', SZ: 'sz', BJ: 'bj', HK: 'hk', US: 'us', O: 'us', N: 'us', A: 'us',
-    };
-
-    /**
-     * Expand one spelling into the secids worth trying, best first. Mirrors
-     * `quotes.js`: prefix and suffix notation, Hong Kong and US codes, and both
-     * markets for an ambiguous bare six-digit A-share code.
-     */
-    function candidateSecids(input) {
+    function candidateSymbols(input) {
       if (typeof input !== 'string') return [];
-      const raw = input.trim();
-      if (raw === '') return [];
-
-      const suffixed = /^([^.-]+)[.-]([A-Za-z]{1,2})$/.exec(raw);
-      if (suffixed !== null) {
-        const market = SUFFIX_MARKETS[suffixed[2].toUpperCase()];
-        const suffixedBody = suffixed[1].trim().toUpperCase();
-        if (market !== undefined && suffixedBody !== '') return secidsForMarket(market, suffixedBody);
+      const value = input.trim().toUpperCase();
+      const suffix = /^(.+)[.-](SH|SS|SZ|BJ|HK|US|O|N|A)$/.exec(value);
+      if (suffix) return marketSymbol(suffix[1], ALIASES[suffix[2]] ?? suffix[2]);
+      const legacy = /^(\d{1,3})\.(.+)$/.exec(value);
+      if (legacy) {
+        const market = legacy[1] === '0' ? (isBeijing(legacy[2]) ? 'BJ' : 'SZ') : LEGACY_MARKETS[legacy[1]];
+        return marketSymbol(legacy[2], market);
       }
-
-      if (/^\d{1,3}\.[A-Za-z0-9._-]+$/.test(raw)) return [raw];
-
-      const prefixed = /^(sh|sz|bj|hk|us|nasdaq|nyse)[.:_-]?(.+)$/i.exec(raw);
-      const prefix = prefixed === null ? '' : prefixed[1].toLowerCase();
-      const body = (prefixed === null ? raw : prefixed[2]).trim().toUpperCase();
-      if (body === '') return [];
-
-      if (prefix === 'nasdaq' || prefix === 'nyse') return secidsForMarket('us', body);
-      if (prefix !== '') return secidsForMarket(prefix, body);
-
-      if (/^\d{6}$/.test(body)) {
-        const primary = /^92\d{4}$/.test(body) ? 'sz' : (/^[569]/.test(body) ? 'sh' : 'sz');
-        const secondary = primary === 'sh' ? 'sz' : 'sh';
-        return [...secidsForMarket(primary, body), ...secidsForMarket(secondary, body)];
+      const prefix = /^(SH|SZ|BJ|HK)(?:[.:_-]|\s)?(\d+)$/i.exec(value)
+        ?? /^(US|NASDAQ|NYSE)[.:_\s-]?([A-Z].+)$/i.exec(value);
+      if (prefix) return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(prefix[1]) ? 'US' : prefix[1]);
+      if (/^\d{6}$/.test(value)) {
+        if (isBeijing(value)) return marketSymbol(value, 'BJ');
+        return (/^[569]/.test(value) ? ['SH', 'SZ'] : ['SZ', 'SH']).flatMap((market) => marketSymbol(value, market));
       }
-      if (/^\d{1,5}$/.test(body)) return secidsForMarket('hk', body);
-      // Eastmoney boards (板块) live on market 90: `BK1036` is the 半导体 board.
-      if (/^BK\d+$/.test(body)) return [`90.${body}`];
-      if (/^[A-Z][A-Z0-9.-]*$/.test(body)) return secidsForMarket('us', body);
-      return [];
+      return marketSymbol(value, /^\d+$/.test(value) ? 'HK' : 'US');
     }
 
-    /**
-     * Board (板块) names resolve against Eastmoney's own index, which this page can
-     * read directly. The index is ~1000 rows across ten pages, so it is fetched on
-     * demand and cached for a while instead of on every keystroke.
-     */
-    const BOARD_FAMILIES = ['m:90+t:2+f:!50', 'm:90+t:3+f:!50'];
-    const BOARD_TTL = 10 * 60 * 1000;
-    let boardIndex = null;
-    let boardIndexAt = 0;
-
-    /** Eastmoney appends Ⅱ/Ⅲ to split boards, so ignore that suffix when matching. */
-    function boardNameKey(name) {
-      return String(name).trim().replace(/[/\u2161-\u2163]$/, '');
-    }
-
-    async function fetchBoardIndex() {
-      if (boardIndex !== null && Date.now() - boardIndexAt < BOARD_TTL) return boardIndex;
-      const rows = [];
-      for (const family of BOARD_FAMILIES) {
-        for (let page = 1; page <= 6; page += 1) {
-          const url = 'https://push2.eastmoney.com/api/qt/clist/get'
-            + `?pn=${page}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=${family}&fields=f12,f14`;
-          // A missing page should narrow the index, not fail the whole lookup, so
-          // a page that errors twice is skipped rather than thrown.
-          let chunk = null;
-          for (let attempt = 0; attempt < 2 && chunk === null; attempt += 1) {
-            try {
-              const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-              if (!response.ok) break;
-              const payload = await response.json();
-              chunk = payload?.data?.diff ?? [];
-            } catch {
-              // Leave the page missing; the loop retries once and then moves on.
-            }
-          }
-          if (chunk === null || chunk.length === 0) break;
-          rows.push(...chunk);
-        }
-      }
-      const index = new Map();
-      for (const row of rows) {
-        const name = boardNameKey(row.f14);
-        const code = String(row.f12 ?? '');
-        if (name !== '' && code !== '' && !index.has(name)) index.set(name, code);
-      }
-      boardIndex = index;
-      boardIndexAt = Date.now();
-      return index;
-    }
-
-    /**
-     * Resolve a board name to its Eastmoney code.
-     * @param query - what the user typed, e.g. `半导体`.
-     * @returns The `BKxxxx` code, or an empty string when there is no unique match.
-     */
-    async function resolveBoard(query) {
-      const wanted = boardNameKey(query);
-      if (wanted.length < 2) return '';
-      const index = await fetchBoardIndex();
-      if (index.has(wanted)) return index.get(wanted);
-      const hits = [...index.entries()].filter(([name]) => name.includes(wanted) || wanted.includes(name));
-      return hits.length === 1 ? hits[0][1] : '';
-    }
-
-    /**
-     * Name search. No public search endpoint sends a CORS header, so the searchable
-     * list is generated by `scripts/build-index.mjs`, committed to the repository and
-     * served from a CDN: one request, cached in localStorage for a day.
-     *
-     * The CDN URLs are pinned to this release, not to `main`, so the bytes the panel
-     * searches are the bytes that shipped with this version: the npm tarball first
-     * (the plugin is distributed through the registry), then the git release tag, then
-     * raw `main` as a fallback for a development checkout whose version is not
-     * published yet. `tests/meta.test.mjs` keeps INDEX_VERSION equal to package.json.
-     */
-    const INDEX_VERSION = '2.0.2';
-    const INDEX_URLS = [
-      `https://cdn.jsdelivr.net/npm/dsh-stock-quotes@${INDEX_VERSION}/data/securities.json`,
-      `https://cdn.jsdelivr.net/gh/AhaCrazy/dsh-stock-quotes@v${INDEX_VERSION}/data/securities.json`,
-      'https://raw.githubusercontent.com/AhaCrazy/dsh-stock-quotes/main/data/securities.json',
-    ];
-    const INDEX_KEY = 'dsh-stock-quotes/index';
+    const INDEX_KEY = 'dsh-stock-quotes/longbridge-index';
     const INDEX_TTL = 24 * 60 * 60 * 1000;
     let indexPromise = null;
 
@@ -369,19 +269,16 @@ window.__ModuleLoader__.load({
       indexPromise = (async () => {
         const cached = readIndexCache();
         if (cached !== null && Date.now() - (cached.at ?? 0) < INDEX_TTL) return cached;
-        for (const url of INDEX_URLS) {
-          try {
-            const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-            if (!response.ok) continue;
-            const payload = await response.json();
-            if (Array.isArray(payload?.entries) && payload.entries.length > 0) {
-              writeIndexCache(payload.entries);
-              return { at: Date.now(), entries: payload.entries };
-            }
-          } catch {
-            // Try the next host, then fall back to whatever is cached.
+        try {
+          const payload = await marketRequest('catalog');
+          if (Array.isArray(payload?.entries) && payload.entries.length > 0) {
+            writeIndexCache(payload.entries);
+            return { at: Date.now(), entries: payload.entries };
           }
+        } catch {
+          // Code entry and cached suggestions remain available.
         }
+        indexPromise = null;
         return cached ?? { at: 0, entries: [] };
       })();
       return indexPromise;
@@ -411,53 +308,11 @@ window.__ModuleLoader__.load({
       return scored.slice(0, limit).map(([, name, spelling]) => [name, spelling]);
     }
 
-    const TREND_ENDPOINT = 'https://push2his.eastmoney.com/api/qt/stock/trends2/get';
-
-    /**
-     * Intraday close series for one entry, trying each candidate market the
-     * spelling allows. `close` is what the sparkline draws; `average` and `volume`
-     * are what the focus chart reads out.
-     * @param input - a watchlist spelling.
-     * @param signal - optional abort signal.
-     * @param days - 1 for today, 5 for the last five sessions.
-     * @returns `{ day, t, v, vol, avg }` rows in chronological order; empty when
-     *   nothing answers.
-     */
     async function fetchTrend(input, signal, days = 1) {
-      for (const secid of candidateSecids(input)) {
-        try {
-          const url = `${TREND_ENDPOINT}?secid=${encodeURIComponent(secid)}`
-            + `&fields1=f1,f2&fields2=f51,f53,f56,f58&ndays=${days}&iscr=0&iscca=0&_=${Date.now()}`;
-          const response = await fetch(url, { signal, cache: 'no-store', headers: { accept: 'application/json' } });
-          if (!response.ok) continue;
-          const payload = await response.json();
-          const rows = payload !== null && payload !== undefined && payload.data
-            ? payload.data.trends
-            : undefined;
-          if (!Array.isArray(rows) || rows.length === 0) continue;
-          const points = [];
-          for (const row of rows) {
-            const parts = String(row).split(',');
-            const stamp = String(parts[0]).trim();
-            const value = Number(parts[1]);
-            if (!Number.isFinite(value)) continue;
-            const volume = Number(parts[2]);
-            const average = Number(parts[3]);
-            points.push({
-              day: stamp.slice(0, 10),
-              t: stamp.slice(-5),
-              v: value,
-              vol: Number.isFinite(volume) ? volume : undefined,
-              avg: Number.isFinite(average) ? average : undefined,
-            });
-          }
-          if (points.length >= 2) return points;
-        } catch (error) {
-          if (error !== null && typeof error === 'object' && error.name === 'AbortError') throw error;
-        }
-      }
-      return [];
+      const payload = await marketRequest('trend', { symbol: input, days }, signal);
+      return payload.points;
     }
+
 
     /**
      * Trading sessions as *durations*, on the Beijing clock the endpoint stamps
@@ -559,7 +414,7 @@ window.__ModuleLoader__.load({
     function sessionKindOf(market) {
       const label = String(market === undefined || market === null ? '' : market).toUpperCase();
       if (label === 'HK') return 'hk';
-      if (label === 'NASDAQ' || label === 'NYSE' || label === 'AMEX') return 'us';
+      if (label === 'US' || label === 'NASDAQ' || label === 'NYSE' || label === 'AMEX') return 'us';
       if (label === 'SH' || label === 'SZ' || label === 'BJ' || label === 'BK') return 'cn';
       return undefined;
     }
@@ -756,11 +611,11 @@ window.__ModuleLoader__.load({
     }
 
     /** Hands → `1.20万手` style, for the cursor readout. */
-    function formatLots(value) {
+    function formatVolume(value) {
       if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
-      if (value >= 1e8) return `${(value / 1e8).toFixed(2)}亿手`;
-      if (value >= 1e4) return `${(value / 1e4).toFixed(2)}万手`;
-      return `${value.toFixed(0)}手`;
+      if (value >= 1e8) return `${(value / 1e8).toFixed(2)}亿股`;
+      if (value >= 1e4) return `${(value / 1e4).toFixed(2)}万股`;
+      return `${value.toFixed(0)}股`;
     }
 
     /**
@@ -854,76 +709,14 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function toNumber(value) {
-      if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-      if (typeof value === 'string' && value.trim() !== '') {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : undefined;
-      }
-      return undefined;
-    }
-
-    function marketName(market, code) {
-      switch (market) {
-        case 1: return 'SH';
-        case 0: return /^(4|8|92)/.test(String(code)) ? 'BJ' : 'SZ';
-        case 116: return 'HK';
-        case 105: return 'NASDAQ';
-        case 106: return 'NYSE';
-        case 107: return 'AMEX';
-        default: return String(market === undefined || market === null ? '' : market);
-      }
-    }
-
-    /** One requested batch, resolved back onto the requested spellings. */
-    async function fetchQuotes(inputs, options) {
-      const { signal } = options || {};
-      const list = (Array.isArray(inputs) ? inputs : [inputs])
-        .map((entry) => String(entry === undefined || entry === null ? '' : entry).trim())
-        .filter((entry) => entry !== '');
-      const plan = list.map(candidateSecids);
-      const secids = [];
-      for (const group of plan) {
-        for (const secid of group) if (secids.indexOf(secid) === -1) secids.push(secid);
-      }
-      if (secids.length === 0) return { quotes: [], unresolved: list };
-
-      const url = `${BATCH_ENDPOINT}?secids=${encodeURIComponent(secids.join(','))}`
-        + `&fields=${BATCH_FIELDS}&invt=2&fltt=2&_=${Date.now()}`;
-      const response = await fetch(url, { signal, cache: 'no-store', headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
-
-      const diff = payload && payload.data ? payload.data.diff : undefined;
-      const rows = Array.isArray(diff) ? diff : diff === undefined || diff === null ? [] : [diff];
-      const bySecid = new Map();
-      for (const row of rows) bySecid.set(`${row.f13}.${row.f12}`, row);
-
+    async function fetchQuotes(inputs, { signal } = {}) {
       const quotes = [];
       const unresolved = [];
-      for (let index = 0; index < list.length; index++) {
-        let row;
-        for (const secid of plan[index]) {
-          const hit = bySecid.get(secid);
-          if (hit !== undefined) { row = hit; break; }
-        }
-        if (row === undefined) { unresolved.push(list[index]); continue; }
-        const code = row.f12 === undefined || row.f12 === null ? '' : String(row.f12);
-        quotes.push({
-          symbol: list[index],
-          code,
-          name: typeof row.f14 === 'string' ? row.f14 : '',
-          market: marketName(row.f13, code),
-          price: toNumber(row.f2),
-          changePct: toNumber(row.f3),
-          change: toNumber(row.f4),
-          high: toNumber(row.f15),
-          low: toNumber(row.f16),
-          open: toNumber(row.f17),
-          preClose: toNumber(row.f18),
-          volume: toNumber(row.f5),
-          amount: toNumber(row.f6),
-        });
+      for (let start = 0; start < inputs.length; start += 100) {
+        const params = inputs.slice(start, start + 100).map((symbol) => ['symbol', symbol]);
+        const batch = await marketRequest('quotes', params, signal);
+        quotes.push(...batch.quotes);
+        unresolved.push(...batch.unresolved);
       }
       return { quotes, unresolved };
     }
@@ -1951,8 +1744,6 @@ window.__ModuleLoader__.load({
         );
       };
 
-      const addingRef = React.useRef(false);
-
       const commitSymbol = (entry) => {
         const cleaned = String(entry).trim();
         if (cleaned === '') return;
@@ -1963,41 +1754,13 @@ window.__ModuleLoader__.load({
         setMatches([]);
       };
 
-      const addSymbol = async (event) => {
+      const addSymbol = (event) => {
         event.preventDefault();
-        if (addingRef.current) return;
         const value = draft.trim();
         if (value === '') return;
-        // A typed code wins over a suggestion: it is exactly what the user meant.
-        if (candidateSecids(value).length > 0) {
-          commitSymbol(value);
-          return;
-        }
-        if (matches.length > 0) {
-          commitSymbol(matches[0][1]);
-          return;
-        }
-        // Not a code. A 同花顺 board code (88xxxx) is private to 同花顺 and has no
-        // public mapping, so point at the two spellings that do work.
-        if (/^88\d{4}$/.test(value)) {
-          flash(t('panel.thsBoardCode'));
-          return;
-        }
-        if (!/[\u4e00-\u9fa5]/.test(value)) {
-          flash(t('panel.notFound'));
-          return;
-        }
-        addingRef.current = true;
-        flash(t('panel.resolving'));
-        try {
-          const code = await resolveBoard(value);
-          if (code === '') flash(t('panel.notFound'));
-          else commitSymbol(code);
-        } catch {
-          flash(t('panel.notFound'));
-        } finally {
-          addingRef.current = false;
-        }
+        if (candidateSymbols(value).length > 0) commitSymbol(value);
+        else if (matches.length > 0) commitSymbol(matches[0][1]);
+        else flash(t('panel.notFound'));
       };
 
       const toggleSelected = (symbol) => {
@@ -2163,7 +1926,7 @@ window.__ModuleLoader__.load({
                 fmt(cursor.v),
                 hasPreClose ? `(${fmtSigned(((cursor.v - preClose) / preClose) * 100)}%)` : '',
                 `${t('focus.avg')} ${fmt(cursor.avg)}`,
-                `${t('focus.vol')} ${formatLots(cursor.vol)}`,
+                `${t('focus.vol')} ${formatVolume(cursor.vol)}`,
               ].filter((part) => part !== '').join('  ·  ')));
       };
 
@@ -2820,8 +2583,6 @@ window.__ModuleLoader__.load({
           'panel.placeholder': FALLBACK_TEXT['panel.placeholder'],
           'panel.empty': FALLBACK_TEXT['panel.empty'],
           'panel.notFound': FALLBACK_TEXT['panel.notFound'],
-          'panel.resolving': FALLBACK_TEXT['panel.resolving'],
-          'panel.thsBoardCode': FALLBACK_TEXT['panel.thsBoardCode'],
           'panel.loading': FALLBACK_TEXT['panel.loading'],
           'panel.error': FALLBACK_TEXT['panel.error'],
           'panel.retry': FALLBACK_TEXT['panel.retry'],
@@ -2899,16 +2660,14 @@ window.__ModuleLoader__.load({
           'panel.refresh': 'Refresh',
           'panel.add': 'Add',
           'panel.placeholder': 'Symbol or board name, e.g. 600519, 半导体, 00700',
-          'panel.empty': 'Your watchlist is empty. Type a symbol or board name above and press Enter.',
+          'panel.empty': 'Your watchlist is empty. Type a symbol or security name above and press Enter.',
           'panel.notFound': 'No symbol or board matches that',
-          'panel.resolving': 'Looking up boards…',
-          'panel.thsBoardCode': 'A 同花顺 board code cannot be used here; type the board name (e.g. 半导体) or the Eastmoney code BK1036',
           'panel.loading': 'Loading…',
           'panel.error': 'Quote request failed',
           'panel.retry': 'Retry',
           'panel.unresolved': 'not found',
           'panel.convention': 'red up / green down',
-          'panel.source': 'Source: Eastmoney',
+          'panel.source': 'Source: Longbridge',
           'panel.drag': 'Drag to reorder',
           'panel.chart': 'Charts',
           'panel.alert': 'Moves over',
@@ -3041,7 +2800,7 @@ window.__ModuleLoader__.load({
       internals: {
         reorderList,
         moveNextTo,
-        candidateSecids,
+        candidateSymbols,
         searchIndex,
         sparklinePath,
         seriesXAt,
@@ -3055,7 +2814,7 @@ window.__ModuleLoader__.load({
         nearestIndex,
         xAxisTicks,
         yAxisTicks,
-        formatLots,
+        formatVolume,
       },
     };
   },

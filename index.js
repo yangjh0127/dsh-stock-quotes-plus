@@ -15,7 +15,9 @@
  *
  * @module dsh-stock-quotes
  */
-import { SYMBOL_HELP, fetchQuotes, formatAmount } from './quotes.js';
+import { SYMBOL_HELP, createMarketData, formatAmount } from './quotes.js';
+import { AuthorizationRequired, createQuoteContext } from './oauth.js';
+import { registerMarketRoutes } from './market-routes.js';
 
 export const name = 'stock-quotes-plus';
 
@@ -24,7 +26,7 @@ export const inject = ['tools'];
 /** Fallback watchlist when the row's config does not override it. */
 const FALLBACK_SYMBOLS = ['sh000001', 'sh600519', 'sz300750', 'hk00700', 'usAAPL'];
 
-const SOURCE = '东方财富 (Eastmoney)';
+const SOURCE = '长桥 (Longbridge)';
 
 /** Short spelling reminder for the result text; the full help rides the tool description. */
 const SYMBOL_HINT = '示例：600519 / sh600519 / 00700 / AAPL';
@@ -79,7 +81,7 @@ const OUTPUT_SCHEMA = {
           high: { type: 'number', description: 'Session high.' },
           low: { type: 'number', description: 'Session low.' },
           preClose: { type: 'number', description: 'Previous close.' },
-          volume: { type: 'number', description: 'Volume in lots.' },
+          volume: { type: 'number', description: 'Volume in shares.' },
           amount: { type: 'number', description: 'Turnover in the quote currency.' },
           marketCap: { type: 'number', description: 'Total market capitalisation.' },
           floatMarketCap: { type: 'number', description: 'Float market capitalisation.' },
@@ -120,7 +122,7 @@ function requestedSymbols(args, defaultSymbols) {
  * @param defaultSymbols - watchlist used when the model passes no symbols.
  * @returns A registry-ready ToolDefinition.
  */
-export function buildToolDefinition(defaultSymbols = FALLBACK_SYMBOLS) {
+export function buildToolDefinition(defaultSymbols = FALLBACK_SYMBOLS, data = createMarketData()) {
   return {
     name: 'stock_quote',
     description: DESCRIPTION,
@@ -141,8 +143,13 @@ export function buildToolDefinition(defaultSymbols = FALLBACK_SYMBOLS) {
       };
     },
     async execute(args, exec) {
-      const result = await fetchQuotes(requestedSymbols(args, defaultSymbols), { signal: exec?.signal });
-      return { ...result, source: SOURCE };
+      try {
+        const result = await data.fetchQuotes(requestedSymbols(args, defaultSymbols), { signal: exec?.signal });
+        return { ...result, source: SOURCE };
+      } catch (error) {
+        if (error instanceof AuthorizationRequired || exec?.signal?.aborted) throw error;
+        throw new Error('长桥行情请求失败。请检查网络、OAuth 授权和行情权限。');
+      }
     },
   };
 }
@@ -244,5 +251,7 @@ export function apply(ctx, config = {}) {
   const configured = config !== null && typeof config === 'object' && Array.isArray(config.defaultSymbols)
     ? config.defaultSymbols.filter((entry) => typeof entry === 'string' && entry.trim() !== '')
     : [];
-  ctx.tools.register(buildToolDefinition(configured.length > 0 ? configured : FALLBACK_SYMBOLS));
+  const data = createMarketData(createQuoteContext(config?.longbridgeClientId));
+  ctx.tools.register(buildToolDefinition(configured.length > 0 ? configured : FALLBACK_SYMBOLS, data));
+  ctx.inject(['webServer'], (webCtx) => registerMarketRoutes(webCtx, data));
 }

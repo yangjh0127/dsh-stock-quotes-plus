@@ -1,7 +1,7 @@
 {
   "name": "dsh-stock-quotes-plus",
-  "version": "2.0.2",
-  "description": "DeepSeek Harness plugin: a neutral, configurable sidebar data panel for A-share / Hong Kong / US quotes and boards, plus a stock_quote tool for the agent.",
+  "version": "3.0.0",
+  "description": "DeepSeek Harness sidebar and optional ticker for Longbridge market data, with the stock_quote agent tool.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -10,7 +10,7 @@
     "stock",
     "quotes",
     "a-share",
-    "eastmoney"
+    "longbridge"
   ],
   "license": "MIT",
   "author": "AhaCrazy",
@@ -39,9 +39,9 @@
     "test": "node tests/meta.test.mjs && node tests/quotes.test.mjs && node tests/render.test.mjs && node tests/client.test.mjs",
     "prepublishOnly": "npm test",
     "check:release": "node scripts/check-release.mjs",
-    "build:index": "node scripts/build-index.mjs",
-    "lint": "eslint client.js quotes.js index.js",
-    "pack:check": "npm pack --dry-run"
+    "lint": "eslint client.js quotes.js index.js oauth.js market-routes.js scripts/authorize.mjs",
+    "pack:check": "npm pack --dry-run",
+    "authorize": "node scripts/authorize.mjs"
   },
   "exports": {
     ".": "./index.js",
@@ -60,11 +60,13 @@
     "icon.svg",
     "locale/*.json",
     "data/*.json",
-    "scripts/build-index.mjs",
     "README.md",
     "README.en.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "oauth.js",
+    "market-routes.js",
+    "scripts/authorize.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -83,5 +85,8 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "eslint": "^9.39.5"
+  },
+  "dependencies": {
+    "longbridge": "5.4.0"
   }
 }

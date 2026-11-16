@@ -1,129 +1,88 @@
-// Checks for the pure quote layer: symbol resolution, formatting, batching and
-// cancellation. The deterministic part needs no network; the live section is
-// skipped (not failed) when the endpoint is unreachable.
-import {
-  candidateSecids, fetchQuotes, formatAmount, toNumber, toQuote, marketName, SYMBOL_HELP,
-} from '../quotes.js';
+import assert from 'node:assert/strict';
+import { candidateSymbols, createMarketData, formatAmount } from '../quotes.js';
+import { AuthorizationRequired, createQuoteContext } from '../oauth.js';
+import { registerMarketRoutes } from '../market-routes.js';
+import { buildToolDefinition } from '../index.js';
 
-let failures = 0;
-let skipped = 0;
-const check = (label, actual, expected) => {
-  const a = JSON.stringify(actual);
-  const e = JSON.stringify(expected);
-  const ok = a === e;
-  if (!ok) failures++;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${ok ? '' : `\n     expected ${e}\n     actual   ${a}`}`);
-};
+for (const [input, expected] of Object.entries({
+  '600519': ['600519.SH', '600519.SZ'], '000001': ['000001.SZ', '000001.SH'],
+  sh600519: ['600519.SH'], sz300750: ['300750.SZ'], '920001': ['920001.BJ'],
+  bj430047: ['430047.BJ'], hk00700: ['700.HK'], '116.00700': ['700.HK'],
+  '00700.HK': ['700.HK'], AAPL: ['AAPL.US'], '105.AAPL': ['AAPL.US'],
+  'BRK.B.US': ['BRK.B.US'], BK1036: [], '90.BK1036': [], '600519.XQ': [],
+})) assert.deepEqual(candidateSymbols(input), expected, input);
 
-console.log('--- candidateSecids ---');
-// A bare six-digit code is ambiguous, so both markets are offered and the first
-// one that answers wins; an explicit market is authoritative.
-check('600519', candidateSecids('600519'), ['1.600519', '0.600519']);
-check('000001', candidateSecids('000001'), ['0.000001', '1.000001']);
-check('300750', candidateSecids('300750'), ['0.300750', '1.300750']);
-check('688981', candidateSecids('688981'), ['1.688981', '0.688981']);
-check('430047 (BJ)', candidateSecids('430047'), ['0.430047', '1.430047']);
-check('830799 (BJ)', candidateSecids('830799'), ['0.830799', '1.830799']);
-check('920001 (BJ 92x)', candidateSecids('920001'), ['0.920001', '1.920001']);
-check('900901 (SH B)', candidateSecids('900901'), ['1.900901', '0.900901']);
-check('000300 (index, market 0 empty first)', candidateSecids('000300'), ['0.000300', '1.000300']);
-check('sh600519', candidateSecids('sh600519'), ['1.600519']);
-check('SH.600519', candidateSecids('SH.600519'), ['1.600519']);
-check('sz000001', candidateSecids('sz000001'), ['0.000001']);
-check('bj430047', candidateSecids('bj430047'), ['0.430047']);
-check('00700 (HK)', candidateSecids('00700'), ['116.00700']);
-check('700 (HK padded)', candidateSecids('700'), ['116.00700']);
-check('hk00700', candidateSecids('hk00700'), ['116.00700']);
-check('hk 700', candidateSecids('hk 700'), ['116.00700']);
-check('AAPL (US)', candidateSecids('AAPL'), ['105.AAPL', '106.AAPL', '107.AAPL']);
-check('usAAPL', candidateSecids('usAAPL'), ['105.AAPL', '106.AAPL', '107.AAPL']);
-check('brk.b stays a US ticker', candidateSecids('BRK.B'), ['105.BRK.B', '106.BRK.B', '107.BRK.B']);
-check('secid passthrough', candidateSecids('1.600519'), ['1.600519']);
+assert.equal(formatAmount(1e8), '1.00亿');
+assert.equal(formatAmount(undefined), '—');
+await assert.rejects(createQuoteContext('')(), AuthorizationRequired);
 
-console.log('--- suffix notation (同花顺 / 通达信 exports) ---');
-check('600519.SH', candidateSecids('600519.SH'), ['1.600519']);
-check('600519.SS (Yahoo SH)', candidateSecids('600519.SS'), ['1.600519']);
-check('600519.sh lowercase', candidateSecids('600519.sh'), ['1.600519']);
-check('000001.SZ', candidateSecids('000001.SZ'), ['0.000001']);
-check('830799.BJ', candidateSecids('830799.BJ'), ['0.830799']);
-check('00700.HK', candidateSecids('00700.HK'), ['116.00700']);
-check('AAPL.US', candidateSecids('AAPL.US'), ['105.AAPL', '106.AAPL', '107.AAPL']);
-check('AAPL.O (NASDAQ)', candidateSecids('AAPL.O'), ['105.AAPL', '106.AAPL', '107.AAPL']);
-check('000300.SH keeps the index on market 1', candidateSecids('000300.SH'), ['1.000300']);
-check('explicit market has no fallback', candidateSecids('600519.SZ'), ['0.600519']);
-check('BK1036 board', candidateSecids('BK1036'), ['90.BK1036']);
-check('bk1036 lowercase board', candidateSecids('bk1036'), ['90.BK1036']);
-check('90.BK1036 secid passthrough', candidateSecids('90.BK1036'), ['90.BK1036']);
+let quoteCalls = 0;
+let staticCalls = 0;
+let trendCalls = 0;
+const data = createMarketData(async () => ({
+  async quote(symbols) {
+    quoteCalls++;
+    assert.deepEqual(symbols, ['700.HK', 'AAPL.US']);
+    return [{ symbol: '700.HK', lastDone: '400', prevClose: '390', volume: 123, turnover: '49200' }];
+  },
+  async staticInfo(symbols) {
+    staticCalls++;
+    assert.deepEqual(symbols, ['700.HK']);
+    return [{ symbol: '700.HK', nameCn: '腾讯控股', totalShares: 1000 }];
+  },
+  async intraday(symbol) {
+    assert.equal(symbol, 'AAPL.US');
+    trendCalls++;
+    return [{ price: '200.50', timestamp: new Date('2026-11-16T21:00:00Z'), volume: 18, avgPrice: '201' }];
+  },
+  async historyCandlesticksByDate(symbol, period, adjust, start, end, sessions) {
+    assert.equal(symbol, '700.HK');
+    assert.equal(period, 1);
+    assert.equal(sessions, 0);
+    return [{ close: '380', timestamp: new Date('2026-11-16T02:00:00Z'), volume: 100 }];
+  },
+}));
 
-check('unknown suffix is not a market', candidateSecids('600519.XQ'), []);
-check('garbage', candidateSecids('??'), []);
-check('empty', candidateSecids('   '), []);
-check('non-string', candidateSecids(42), []);
+const tool = buildToolDefinition([], data);
+const result = await tool.execute({ symbols: ['hk00700', '700.HK', 'AAPL', 'BK1036'] });
+assert.equal(result.source, '长桥 (Longbridge)');
+assert.deepEqual(result.quotes.map((quote) => quote.symbol), ['hk00700', '700.HK']);
+assert.deepEqual(result.unresolved, ['AAPL', 'BK1036']);
+assert.equal(result.quotes[0].name, '腾讯控股');
+assert.equal(result.quotes[0].change, 10);
+assert.equal(result.quotes[0].changePct, 2.56410256);
+assert.equal(result.quotes[0].marketCap, 400000);
+await data.fetchQuotes(['hk00700', 'AAPL']);
+assert.equal(quoteCalls, 2);
+assert.equal(staticCalls, 1);
+await assert.rejects(data.fetchQuotes(['AAPL'], { signal: AbortSignal.abort() }), { name: 'AbortError' });
+assert.deepEqual(await data.fetchTrend('AAPL', 1), [{ day: '2026-11-16', t: '05:00', v: 200.5, vol: 18, avg: 201 }]);
+await data.fetchTrend('AAPL.US', 1);
+assert.equal(trendCalls, 1);
+assert.deepEqual(await data.fetchTrend('hk00700', 5), [{ day: '2026-11-16', t: '10:00', v: 380, vol: 100, avg: undefined }]);
 
-console.log('--- helpers ---');
-check('toNumber(1.5)', toNumber(1.5), 1.5);
-check('toNumber("-")', toNumber('-'), undefined);
-check('toNumber("")', toNumber(''), undefined);
-check('toNumber("3.2")', toNumber('3.2'), 3.2);
-check('marketName(1)', marketName(1, '600519'), 'SH');
-check('marketName(0 sz)', marketName(0, '000001'), 'SZ');
-check('marketName(0 bj)', marketName(0, '830799'), 'BJ');
-check('marketName(116)', marketName(116, '00700'), 'HK');
-check('marketName(105)', marketName(105, 'AAPL'), 'NASDAQ');
-check('formatAmount(2.26e9)', formatAmount(2.26e9), '22.60亿');
-check('formatAmount(70944)', formatAmount(70944), '7.09万');
-check('formatAmount(12.5)', formatAmount(12.5), '12.50');
-check('formatAmount(undefined)', formatAmount(undefined), '—');
-check('toQuote drops absent fields', toQuote({ f12: 'AAPL', f13: 105, f14: '苹果', f2: '-', f3: -1.84 }), {
-  symbol: '105.AAPL', code: 'AAPL', name: '苹果', market: 'NASDAQ', changePct: -1.84,
-});
-
-console.log('--- cancellation (no network needed) ---');
-const controller = new AbortController();
-controller.abort();
-let aborted = false;
-try {
-  await fetchQuotes(['600519'], { signal: controller.signal });
-} catch (error) {
-  aborted = error?.name === 'AbortError' || /abort/i.test(String(error?.message));
+const handlers = new Map();
+registerMarketRoutes({
+  get: () => ({
+    requestRejection: ({ headers }) => headers.allowed ? undefined : 401,
+  }),
+  effect: (callback) => callback(),
+  webServer: { register: ({ path, handler }) => handlers.set(path, handler) },
+}, data);
+async function request(path, query, allowed, method = 'GET') {
+  const url = '/api/dsh-stock-quotes-plus/' + path;
+  let status;
+  let body;
+  await handlers.get(url)({ url: url + query, method, headers: { allowed } }, {
+    writeHead(code) { status = code; },
+    end(value) { body = JSON.parse(value); },
+  });
+  return { status, body };
 }
-check('pre-aborted signal rejects', aborted, true);
+assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', false)).status, 401);
+assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', true, 'POST')).status, 405);
+assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', true)).body.quotes[0].name, '腾讯控股');
+assert.equal((await request('trend', '?symbol=700.HK&days=5', true)).body.points[0].v, 380);
+assert.ok((await request('catalog', '', true)).body.entries.some(([, symbol]) => symbol === '700.HK'));
 
-console.log('--- empty input short-circuits without a request ---');
-const empty = await fetchQuotes([], { fetchImpl: async () => { throw new Error('should not fetch'); } });
-check('empty input yields no quotes', empty.quotes, []);
-check('empty input yields no unresolved', empty.unresolved, []);
-
-console.log('--- live endpoint (skipped when offline) ---');
-try {
-  const live = await fetchQuotes(['sh000001', 'sh600519', 'sz000001', 'hk00700', 'usAAPL', 'nope!!']);
-  console.log('asOf', live.asOf);
-  for (const quote of live.quotes) {
-    console.log(`  ${quote.symbol.padEnd(10)} ${String(quote.name).padEnd(12)} ${quote.code.padEnd(8)} ${quote.market.padEnd(7)} price=${quote.price} chg=${quote.change} pct=${quote.changePct}% amount=${formatAmount(quote.amount)}`);
-  }
-  console.log('  unresolved =', JSON.stringify(live.unresolved));
-  check('resolved 5 of 6', live.quotes.length, 5);
-  check('unresolved is the bad one', live.unresolved, ['nope!!']);
-  // The live feed can return a symbol and name without a trading price.
-  check('available prices are finite', live.quotes.every((quote) => quote.price === undefined || Number.isFinite(quote.price)), true);
-  check('at least one quote has a price', live.quotes.some((quote) => Number.isFinite(quote.price)), true);
-  check('every quote has a name', live.quotes.every((quote) => typeof quote.name === 'string' && quote.name.length > 0), true);
-
-  let calls = 0;
-  const counting = async (url, init) => {
-    calls++;
-    return fetch(url, init);
-  };
-  const many = await fetchQuotes(['600519', '000001', '300750', '00700', 'AAPL', 'MSFT'], { fetchImpl: counting });
-  check('one request serves six symbols', calls, 1);
-  check('six quotes', many.quotes.length, 6);
-} catch (error) {
-  skipped += 1;
-  console.log(`SKIP live endpoint: ${error?.message ?? error}`);
-}
-
-console.log(`\nSYMBOL_HELP: ${SYMBOL_HELP}`);
-console.log(failures === 0
-  ? `\nALL CHECKS PASSED${skipped > 0 ? ` (${skipped} live section skipped)` : ''}`
-  : `\n${failures} CHECK(S) FAILED`);
-process.exitCode = failures === 0 ? 0 : 1;
+console.log('Longbridge fixtures passed: symbol migration, quote mapping, charts, permissions and same-origin routes');

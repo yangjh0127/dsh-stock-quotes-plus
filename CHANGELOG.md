@@ -9,6 +9,11 @@ The 1.x headings group the fast pre-2.0 development series (roughly one release
 per merged theme) rather than every intermediate patch; the dates are the days
 those series closed. The current release is **2.0.2**, cut on 2026-11-02.
 
+## [3.0.0]
+
+- Use Longbridge OpenAPI with OAuth 2.0 for quotes, charts and the agent tool.
+- Preserve existing stock codes and watchlists. Eastmoney-specific board codes have no direct Longbridge equivalent.
+
 ## [Unreleased]
 
 ### Added

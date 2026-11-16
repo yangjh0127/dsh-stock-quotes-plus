@@ -1,262 +1,211 @@
-/**
- * Symbol resolution + quote fetching for dsh-stock-quotes.
- *
- * This module is the Host half's data layer. It has no Harness imports, so it can
- * be syntax-checked and exercised directly with node. The browser half carries its
- * own copy of the same rules (a plain-JS client bundle cannot import a local file),
- * so any change to the rules here must be mirrored in `client.js`.
- *
- * Data source: Eastmoney's public quote endpoint. It is JSON, UTF-8, needs no key
- * and echoes the requesting origin in `Access-Control-Allow-Origin`, which is why
- * the browser half can call it directly.
- *
- * @module dsh-stock-quotes/quotes
- */
+import { AdjustType, NaiveDate, Period, TradeSessions } from 'longbridge';
+import { readFile } from 'node:fs/promises';
+import { createQuoteContext } from './oauth.js';
 
-/** Batch quote endpoint. One request serves a whole watchlist. */
-const BATCH_ENDPOINT = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
-
-/**
- * Requested fields: f12 code, f13 market, f14 name, f2 price, f3 change pct,
- * f4 change amount, f5 volume (lots), f6 turnover, f15 high, f16 low, f17 open,
- * f18 previous close, f20 total market cap, f21 float market cap.
- */
-const BATCH_FIELDS = 'f12,f13,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18,f20,f21';
-
-/** Eastmoney market numbers tried for a bare US ticker, in order. */
-const US_MARKETS = [105, 106, 107];
-
-/** How the accepted symbol spellings are described to models and users. */
 export const SYMBOL_HELP =
-  'Accepted symbol spellings: A-share `600519`, `sh600519`, `sz000001`, `bj430047`, `600519.SH`, `000001.SZ`; '
-  + 'Hong Kong `00700`, `hk00700`, `00700.HK`; US `AAPL`, `usAAPL`, `AAPL.US`; '
-  + 'or a raw Eastmoney secid such as `1.600519`. A bare 1-5 digit number is read as Hong Kong, '
-  + 'and Eastmoney boards use `BK1036`. Chinese names are not resolved by this tool; pass a code.';
+  'Use Longbridge symbols such as 600519.SH, 300750.SZ, 700.HK or AAPL.US. '
+  + 'Existing watchlist spellings such as sh600519, hk00700, 116.00700 and AAPL also work.';
 
-/**
- * Pad a Hong Kong code to its five-digit form (`700` -> `00700`).
- * @param body - digits as typed.
- * @returns The padded code.
- */
-function hkCode(body) {
-  const digits = body.replace(/^0+/, '');
-  return digits === '' ? '00000' : digits.padStart(5, '0');
-}
+const ALIASES = { SS: 'SH', O: 'US', N: 'US', A: 'US' };
+const LEGACY_MARKETS = { 1: 'SH', 116: 'HK', 105: 'US', 106: 'US', 107: 'US' };
+const CHINA_MARKETS = ['SH', 'SZ', 'BJ'];
+const isBeijing = (code) => /^(?:[48]|92)/.test(code);
 
-/**
- * Secids for one market. `sh` is market 1, `sz`/`bj` share market 0, Hong Kong is
- * 116, and the three US exchanges are 105/106/107.
- * @param market - `sh` | `sz` | `bj` | `hk` | `us`.
- * @param body - the code part, already uppercased.
- * @returns Candidate secids, best first.
- */
-function secidsForMarket(market, body) {
-  if (market === 'sh') return [`1.${body}`];
-  if (market === 'sz' || market === 'bj') return [`0.${body}`];
-  if (market === 'hk') return [`116.${hkCode(body)}`];
-  if (market === 'us') return US_MARKETS.map((secidMarket) => `${secidMarket}.${body}`);
+function marketSymbol(code, market) {
+  if (market === 'HK' && /^\d{1,5}$/.test(code)) return [Number(code) + '.HK'];
+  if (CHINA_MARKETS.includes(market) && /^\d{6}$/.test(code)) return [code + '.' + market];
+  if (market === 'US' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
+    return [code + '.US'];
+  }
   return [];
 }
 
-/** Exchange suffixes seen in exports from 同花顺 / 通达信 / Yahoo. */
-const SUFFIX_MARKETS = {
-  SH: 'sh', SS: 'sh', SZ: 'sz', BJ: 'bj', HK: 'hk', US: 'us', O: 'us', N: 'us', A: 'us',
-};
-
-/**
- * Expand one user/model spelling into the secids worth trying, best first.
- *
- * Accepts the spellings people copy out of a quote terminal — `600519`,
- * `600519.SH`, `sh600519`, `1.600519` — plus Hong Kong and US codes. A bare
- * six-digit A-share code is genuinely ambiguous (Shanghai indices share the
- * `000xxx` range with Shenzhen listings), so both markets are offered and the
- * first one that answers wins; an explicit market is authoritative.
- *
- * @param input - a symbol spelling, possibly with an exchange prefix or suffix.
- * @returns Candidate secids; empty when the spelling cannot be interpreted.
- */
-export function candidateSecids(input) {
+export function candidateSymbols(input) {
   if (typeof input !== 'string') return [];
-  const raw = input.trim();
-  if (raw === '') return [];
-
-  // Suffix notation: `600519.SH`, `000001.SZ`, `00700.HK`, `AAPL.US`, `AAPL.O`.
-  const suffixed = /^([^.-]+)[.-]([A-Za-z]{1,2})$/.exec(raw);
-  if (suffixed !== null) {
-    const market = SUFFIX_MARKETS[suffixed[2].toUpperCase()];
-    const body = suffixed[1].trim().toUpperCase();
-    if (market !== undefined && body !== '') return secidsForMarket(market, body);
+  const value = input.trim().toUpperCase();
+  const suffix = /^(.+)[.-](SH|SS|SZ|BJ|HK|US|O|N|A)$/.exec(value);
+  if (suffix) return marketSymbol(suffix[1], ALIASES[suffix[2]] ?? suffix[2]);
+  const legacy = /^(\d{1,3})\.(.+)$/.exec(value);
+  if (legacy) {
+    const market = legacy[1] === '0' ? (isBeijing(legacy[2]) ? 'BJ' : 'SZ') : LEGACY_MARKETS[legacy[1]];
+    return marketSymbol(legacy[2], market);
   }
-
-  // Already a secid, e.g. `1.600519` (a market id of at most three digits).
-  if (/^\d{1,3}\.[A-Za-z0-9._-]+$/.test(raw)) return [raw];
-
-  const prefixed = /^(sh|sz|bj|hk|us|nasdaq|nyse)[.:_-]?(.+)$/i.exec(raw);
-  const prefix = prefixed === null ? '' : prefixed[1].toLowerCase();
-  const body = (prefixed === null ? raw : prefixed[2]).trim().toUpperCase();
-  if (body === '') return [];
-
-  if (prefix === 'nasdaq' || prefix === 'nyse') return secidsForMarket('us', body);
-  if (prefix !== '') return secidsForMarket(prefix, body);
-
-  if (/^\d{6}$/.test(body)) {
-    // 92xxxx are Beijing codes that start with 9; every other 4/8/0/1/2/3 code is
-    // Shenzhen or Beijing on market 0, and 5/6/9 are Shanghai. Try the likely
-    // market first, then the other one, so index codes such as `000300` still work.
-    const primary = /^92\d{4}$/.test(body) ? 'sz' : (/^[569]/.test(body) ? 'sh' : 'sz');
-    const secondary = primary === 'sh' ? 'sz' : 'sh';
-    return [...secidsForMarket(primary, body), ...secidsForMarket(secondary, body)];
+  const prefix = /^(SH|SZ|BJ|HK)(?:[.:_-]|\s)?(\d+)$/i.exec(value)
+    ?? /^(US|NASDAQ|NYSE)[.:_\s-]?([A-Z].+)$/i.exec(value);
+  if (prefix) return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(prefix[1]) ? 'US' : prefix[1]);
+  if (/^\d{6}$/.test(value)) {
+    if (isBeijing(value)) return marketSymbol(value, 'BJ');
+    return (/^[569]/.test(value) ? ['SH', 'SZ'] : ['SZ', 'SH']).flatMap((market) => marketSymbol(value, market));
   }
-  if (/^\d{1,5}$/.test(body)) return secidsForMarket('hk', body);
-  // Eastmoney boards (板块) live on market 90: `BK1036` is the 半导体 board.
-  if (/^BK\d+$/.test(body)) return [`90.${body}`];
-  if (/^[A-Z][A-Z0-9.-]*$/.test(body)) return secidsForMarket('us', body);
-  return [];
+  return marketSymbol(value, /^\d+$/.test(value) ? 'HK' : 'US');
 }
 
-/**
- * Coerce a quote field into a finite number.
- * @param value - raw field value; Eastmoney uses `"-"` for "not applicable".
- * @returns The number, or undefined when the field carries no value.
- */
-export function toNumber(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
+function toNumber(value) {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
-/**
- * Name the exchange a quote row came from.
- * @param market - Eastmoney market number.
- * @param code - security code.
- * @returns A short exchange label.
- */
-export function marketName(market, code) {
-  switch (market) {
-    case 1: return 'SH';
-    case 0: return /^(4|8|92)/.test(String(code)) ? 'BJ' : 'SZ';
-    case 90: return 'BK';
-    case 116: return 'HK';
-    case 105: return 'NASDAQ';
-    case 106: return 'NYSE';
-    case 107: return 'AMEX';
-    default: return String(market ?? '');
-  }
-}
-
-/**
- * Convert one Eastmoney row into the plugin's quote shape, dropping absent fields
- * so the tool's output schema never sees a null.
- * @param row - one entry of the endpoint's `data.diff` array.
- * @returns A plain quote object.
- */
-export function toQuote(row) {
-  const code = row.f12 === undefined || row.f12 === null ? '' : String(row.f12);
-  const quote = {
-    symbol: `${row.f13}.${code}`,
-    code,
-    name: typeof row.f14 === 'string' ? row.f14 : '',
-    market: marketName(row.f13, code),
-  };
-  const numeric = {
-    price: row.f2,
-    change: row.f4,
-    changePct: row.f3,
-    open: row.f17,
-    high: row.f15,
-    low: row.f16,
-    preClose: row.f18,
-    volume: row.f5,
-    amount: row.f6,
-    marketCap: row.f20,
-    floatMarketCap: row.f21,
-  };
-  for (const [key, value] of Object.entries(numeric)) {
-    const parsed = toNumber(value);
-    if (parsed !== undefined) quote[key] = parsed;
-  }
-  return quote;
-}
-
-/**
- * Format a turnover figure the way a Chinese market page does.
- * @param value - amount in the quote currency.
- * @returns A short human string.
- */
 export function formatAmount(value) {
-  const parsed = toNumber(value);
-  if (parsed === undefined) return '—';
-  if (Math.abs(parsed) >= 1e8) return `${(parsed / 1e8).toFixed(2)}亿`;
-  if (Math.abs(parsed) >= 1e4) return `${(parsed / 1e4).toFixed(2)}万`;
-  return parsed.toFixed(2);
+  const number = toNumber(value);
+  if (number === undefined) return '—';
+  if (Math.abs(number) >= 1e8) return (number / 1e8).toFixed(2) + '亿';
+  if (Math.abs(number) >= 1e4) return (number / 1e4).toFixed(2) + '万';
+  return number.toFixed(2);
 }
 
-/**
- * Fetch quotes for a list of symbol spellings with one batched request.
- *
- * @param inputs - symbol spellings as typed by the user or the model.
- * @param options - `signal` cancels the request, `timeoutMs` bounds it, and
- *   `fetchImpl` overrides the transport for tests.
- * @returns `{ quotes, unresolved, asOf }`; `quotes[].symbol` echoes the input.
- * @throws When the endpoint is unreachable or answers with a non-JSON/HTTP error.
- */
-export async function fetchQuotes(inputs, options = {}) {
-  const { signal, timeoutMs = 10000, fetchImpl = globalThis.fetch } = options;
-  const list = (Array.isArray(inputs) ? inputs : [inputs])
-    .map((entry) => String(entry ?? '').trim())
-    .filter((entry) => entry !== '');
+function normalizeQuote(row, info, spelling) {
+  const dot = row.symbol.lastIndexOf('.');
+  const code = row.symbol.slice(0, dot);
+  const market = row.symbol.slice(dot + 1);
+  const price = toNumber(row.lastDone);
+  const preClose = toNumber(row.prevClose);
+  const change = price !== undefined && preClose > 0 ? price - preClose : undefined;
+  const quote = { symbol: spelling, code, name: info?.nameCn || info?.nameEn || code, market };
+  const volume = toNumber(row.volume);
+  const numeric = {
+    price, preClose, change: toNumber(change?.toFixed(8)),
+    changePct: change === undefined ? undefined : toNumber((100 * change / preClose).toFixed(8)),
+    open: toNumber(row.open), high: toNumber(row.high), low: toNumber(row.low),
+    volume, amount: toNumber(row.turnover),
+    marketCap: price !== undefined && info?.totalShares > 0 ? toNumber(price * info.totalShares) : undefined,
+    floatMarketCap: price !== undefined && info?.circulatingShares > 0 ? toNumber(price * info.circulatingShares) : undefined,
+  };
+  return Object.assign(quote, Object.fromEntries(Object.entries(numeric).filter(([, value]) => value !== undefined)));
+}
 
-  const plan = list.map(candidateSecids);
-  const secids = [];
-  for (const group of plan) {
-    for (const secid of group) if (!secids.includes(secid)) secids.push(secid);
+const tradingDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+const beijingDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+const beijingTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function trendDay(timestamp, symbol) {
+  return (symbol.endsWith('.US') ? tradingDay : beijingDay).format(timestamp);
+}
+
+function trendPoint(row, symbol) {
+  const v = toNumber(row.price ?? row.close);
+  if (v === undefined) return null;
+  return {
+    day: trendDay(row.timestamp, symbol), t: beijingTime.format(row.timestamp), v,
+    vol: toNumber(row.volume), avg: toNumber(row.avgPrice),
+  };
+}
+
+function noQuote(error) {
+  // The N-API SDK may include the business code in the error message.
+  return /\b30160[23]\b/.test(String(error?.code ?? '') + ' ' + String(error?.message ?? ''));
+}
+
+async function historicalPoints(context, symbol) {
+  const rows = new Map();
+  let end;
+  // Each history request returns at most 1000 minutes. Overlap the boundary
+  // session so a partially returned session is completed on the next page.
+  for (let page = 0; page < 4; page += 1) {
+    const bars = await context.historyCandlesticksByDate(
+      symbol, Period.Min_1, AdjustType.NoAdjust, null, end, TradeSessions.Intraday,
+    );
+    if (bars.length === 0) break;
+    for (const row of bars) rows.set(row.timestamp.getTime(), row);
+    const days = [...new Set([...rows.values()].map((row) => trendDay(row.timestamp, symbol)))].sort();
+    if (days.length > 5 || bars.length < 1000) break;
+    const [year, month, day] = days[0].split('-').map(Number);
+    const next = new NaiveDate(year, month, day);
+    if (String(next) === String(end)) break;
+    end = next;
   }
+  const sorted = [...rows.values()].sort((left, right) => left.timestamp - right.timestamp);
+  const days = [...new Set(sorted.map((row) => trendDay(row.timestamp, symbol)))].slice(-5);
+  return sorted.filter((row) => days.includes(trendDay(row.timestamp, symbol)));
+}
 
-  const asOf = new Date().toISOString();
-  if (secids.length === 0) return { quotes: [], unresolved: list, asOf };
+export function createMarketData(getContext = createQuoteContext()) {
+  const metadata = new Map();
+  const trends = new Map();
+  const lifetime = 60_000;
+  let catalog;
 
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort(signal?.reason);
-  if (signal !== undefined) {
-    if (signal.aborted) controller.abort(signal.reason);
-    else signal.addEventListener('abort', abortFromParent, { once: true });
-  }
-  const timer = setTimeout(
-    () => controller.abort(new Error(`stock quote request timed out after ${timeoutMs}ms`)),
-    timeoutMs,
-  );
-
-  let payload;
-  try {
-    const url = `${BATCH_ENDPOINT}?secids=${encodeURIComponent(secids.join(','))}`
-      + `&fields=${BATCH_FIELDS}&invt=2&fltt=2&_=${Date.now()}`;
-    const response = await fetchImpl(url, {
-      signal: controller.signal,
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) throw new Error(`quote endpoint answered HTTP ${response.status}`);
-    payload = await response.json();
-  } finally {
-    clearTimeout(timer);
-    if (signal !== undefined) signal.removeEventListener('abort', abortFromParent);
-  }
-
-  const diff = payload?.data?.diff;
-  const rows = Array.isArray(diff) ? diff : diff === undefined || diff === null ? [] : [diff];
-  const bySecid = new Map(rows.map((row) => [`${row.f13}.${row.f12}`, row]));
-
-  const quotes = [];
-  const unresolved = [];
-  for (let index = 0; index < list.length; index++) {
-    const row = plan[index].map((secid) => bySecid.get(secid)).find((hit) => hit !== undefined);
-    if (row === undefined) {
-      unresolved.push(list[index]);
-      continue;
+  async function fetchQuotes(inputs, { signal } = {}) {
+    signal?.throwIfAborted();
+    const list = (Array.isArray(inputs) ? inputs : [inputs]).filter((input) => typeof input === 'string' && input.trim()).map((input) => input.trim());
+    const plans = list.map(candidateSymbols);
+    const symbols = [...new Set(plans.flat())];
+    const rows = new Map();
+    if (symbols.length > 0) {
+      const ctx = await getContext();
+      for (let start = 0; start < symbols.length; start += 500) {
+        signal?.throwIfAborted();
+        const batch = symbols.slice(start, start + 500);
+        for (const row of await ctx.quote(batch)) rows.set(row.symbol, row);
+        const missing = batch.filter((symbol) => rows.has(symbol) && !metadata.has(symbol));
+        if (missing.length) {
+          // Prices remain available even if optional names and share counts fail.
+          try {
+            for (const info of await ctx.staticInfo(missing)) metadata.set(info.symbol, info);
+          } catch {
+            // The next quote can retry static data.
+          }
+        }
+      }
     }
-    quotes.push({ ...toQuote(row), symbol: list[index] });
+    signal?.throwIfAborted();
+    const quotes = [];
+    const unresolved = [];
+    for (const [index, spelling] of list.entries()) {
+      const symbol = plans[index].find((candidate) => rows.has(candidate));
+      if (symbol === undefined) unresolved.push(spelling);
+      else quotes.push(normalizeQuote(rows.get(symbol), metadata.get(symbol), spelling));
+    }
+    return { quotes, unresolved, asOf: new Date().toISOString() };
   }
-  return { quotes, unresolved, asOf };
+
+  async function fetchTrend(input, days) {
+    for (const symbol of candidateSymbols(input)) {
+      const key = symbol + ':' + days;
+      let entry = trends.get(key);
+      if (!entry || Date.now() - entry.at >= lifetime) {
+        if (trends.size >= 512) trends.delete(trends.keys().next().value);
+        entry = {
+          at: Date.now(),
+          points: (async () => {
+            const ctx = await getContext();
+            try {
+              const rows = days === 5 ? await historicalPoints(ctx, symbol) : await ctx.intraday(symbol);
+              return rows.map((row) => trendPoint(row, symbol)).filter(Boolean);
+            } catch (error) {
+              if (noQuote(error)) return [];
+              throw error;
+            }
+          })(),
+        };
+        trends.set(key, entry);
+      }
+      try {
+        const points = await entry.points;
+        if (points.length > 0) return points;
+      } catch (error) {
+        if (trends.get(key) === entry) trends.delete(key);
+        throw error;
+      }
+    }
+    return [];
+  }
+
+  function fetchCatalog() {
+    catalog ??= readFile(new URL('./data/securities.json', import.meta.url), 'utf8').then((json) =>
+      JSON.parse(json).entries.flatMap(([name, code]) => {
+        const [symbol] = candidateSymbols(code);
+        return symbol === undefined ? [] : [[name, symbol]];
+      }),
+    );
+    return catalog;
+  }
+
+  return { fetchQuotes, fetchTrend, fetchCatalog };
 }
