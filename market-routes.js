@@ -11,7 +11,7 @@ export function registerMarketRoutes(ctx, data, auth) {
   const routes = {
     quotes: (params) => data.fetchQuotes(params.getAll('symbol')),
     trend: async (params) => ({ points: await data.fetchTrend(params.get('symbol'), params.get('days') === '5' ? 5 : 1) }),
-    catalog: async () => ({ entries: await data.fetchCatalog() }),
+    catalog: () => data.fetchCatalog(),
   };
   if (auth) {
     routes['auth/status'] = () => auth.status();

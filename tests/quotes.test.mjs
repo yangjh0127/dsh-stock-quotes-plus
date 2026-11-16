@@ -9,7 +9,7 @@ for (const [input, expected] of Object.entries({
   sh600519: ['600519.SH'], sz300750: ['300750.SZ'], '920001': ['920001.BJ'],
   bj430047: ['430047.BJ'], hk00700: ['700.HK'], '116.00700': ['700.HK'],
   '00700.HK': ['700.HK'], AAPL: ['AAPL.US'], '105.AAPL': ['AAPL.US'],
-  'BRK.B.US': ['BRK.B.US'], BK1036: [], '90.BK1036': [], '600519.XQ': [],
+  'BRK.B.US': ['BRK.B.US'], '.IXIC.US': ['.IXIC.US'], IXIC: ['.IXIC.US'], '.NDX': ['.NDX.US'], BK1036: [], '90.BK1036': [], '600519.XQ': [],
 })) assert.deepEqual(candidateSymbols(input), expected, input);
 
 assert.equal(formatAmount(1e8), '1.00亿');
@@ -51,10 +51,18 @@ const data = createMarketData(async () => ({
     assert.deepEqual(symbols, ['700.HK']);
     return [{ symbol: '700.HK', nameCn: '腾讯控股', totalShares: 1000 }];
   },
-  async intraday(symbol) {
+  async intraday(symbol, sessions) {
+    assert.equal(sessions, 0);
     assert.equal(symbol, 'AAPL.US');
     trendCalls++;
     return [{ price: '200.50', timestamp: new Date('2026-11-16T21:00:00Z'), volume: 18, avgPrice: '201' }];
+  },
+  async securityList(market) {
+    return {
+      1: [{ symbol: 'AAPL.US', nameCn: '苹果', nameEn: 'Apple' }],
+      2: [{ symbol: '700.HK', nameCn: '腾讯控股' }],
+      3: [{ symbol: '688981.SH', nameCn: '中芯国际' }, { symbol: '000001.SZ', nameCn: '平安银行' }],
+    }[market];
   },
   async historyCandlesticksByDate(symbol, period, adjust, start, end, sessions) {
     assert.equal(symbol, '700.HK');
@@ -110,4 +118,11 @@ assert.equal((await request('quotes', '?symbol=700.HK&symbol=AAPL.US', true)).bo
 assert.equal((await request('trend', '?symbol=700.HK&days=5', true)).body.points[0].v, 380);
 assert.ok((await request('catalog', '', true)).body.entries.some(([, symbol]) => symbol === '700.HK'));
 
+const search = (await request('catalog', '', true)).body;
+assert.ok(search.complete);
+assert.ok(search.entries.some(([name, symbol]) => name === '苹果' && symbol === 'AAPL.US'));
+assert.ok(search.entries.some(([name, symbol]) => name.includes('纳斯达克') && symbol === '.IXIC.US'));
+for (const symbol of ['700.HK', '688981.SH', '000001.SZ', '920799.BJ', '000001.SH', '399001.SZ']) {
+  assert.ok(search.entries.some(([, code]) => code === symbol), symbol);
+}
 console.log('Longbridge fixtures passed: symbol migration, quote mapping, charts, permissions and same-origin routes');

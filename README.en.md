@@ -44,7 +44,7 @@ The host registers a public OAuth client on the first click using the [official 
 
 In DSH Web, open **Data** in the sidebar and select **Show top stock ticker** in its toolbar. The same option is available in the bundle settings. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
 
-The ticker shares the panel's Longbridge quotes, watchlist order, refresh interval, up/down colors and price-move threshold. Add, remove or reorder stocks in the panel to update the ticker. Click a quote to view details.
+The ticker shares the panel's Longbridge quotes, watchlist order, refresh interval, up/down colors and price-move threshold. Add, remove or reorder stocks in the panel to update the ticker. Click a security name to view its intraday chart in the detail card.
 
 Based on [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes), with a ticker adapted from [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker). See [LICENSE](LICENSE) and [LICENSE-ticker](LICENSE-ticker).
 
@@ -121,7 +121,7 @@ Preferences live in `localStorage` under `dsh-stock-quotes/prefs`.
 
 ## Symbols and search
 
-Use Longbridge symbols such as `600519.SH`, `300750.SZ`, `700.HK` and `AAPL.US`. Existing entries such as `sh600519`, `hk00700` and `116.00700` still resolve. Suggestions come from a bundled name index. Quotes are read from Longbridge using the mapped symbols. Other symbols can be entered by code, subject to coverage and account permissions. Eastmoney's proprietary `BKxxxx` boards have no direct mapping.
+Use Longbridge symbols such as `600519.SH`, `300750.SZ`, `700.HK` and `AAPL.US`. Existing entries such as `sh600519`, `hk00700` and `116.00700` still resolve. Search combines Longbridge’s US, HK, Shanghai and Shenzhen lists (including STAR Market) with the bundled index. For Nasdaq Composite, search `.IXIC.US`. Beijing Exchange names and codes are searchable, but tested Beijing symbols returned no Longbridge quotes. Other symbols can be entered by code, subject to coverage and account permissions. Eastmoney's proprietary `BKxxxx` boards have no direct mapping.
 
 ## Configuration
 

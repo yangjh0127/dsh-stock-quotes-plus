@@ -123,7 +123,7 @@ const SPELLINGS = [
   '000300', '000688', '000905', '510300', '159915', '161725', '128136',
   'sh600519', 'sz000001', 'bj430047', 'hk00700', 'usAAPL', 'SH.600519', 'hk 700',
   '600519.SH', '600519.SS', '600519.sh', '000001.SZ', '830799.BJ', '00700.HK',
-  'AAPL.US', 'AAPL.O', '000300.SH', '600519.SZ', '1.600519', '116.00700', '105.AAPL',
+  'AAPL.US', 'AAPL.O', '.IXIC.US', 'IXIC', '000300.SH', '600519.SZ', '1.600519', '116.00700', '105.AAPL',
   'BK1036', 'bk1036', '90.BK1036',
   '00700', '700', 'AAPL', 'BRK.B', '600519.XQ', '??', '', '   ',
 ];
@@ -148,6 +148,8 @@ const SAMPLE = [
   ['半导体材料', 'BK1325'],
   ['阿里巴巴-W', 'hk09988'],
   ['AAPL', 'usAAPL'],
+  ['纳斯达克综合指数', '.IXIC.US'],
+  ['NASDAQ Composite Index', '.IXIC.US'],
 ];
 check('exact name ranks first', searchIndex(SAMPLE, '半导体')[0], ['半导体', 'BK1036']);
 check('name prefix beats name substring', searchIndex(SAMPLE, '茅台').map(([name]) => name), ['茅台酒业', '贵州茅台']);
@@ -155,6 +157,7 @@ check('code prefix finds the entry', searchIndex(SAMPLE, 'sh600519')[0], ['贵�
 check('board code prefix finds the board', searchIndex(SAMPLE, 'BK13')[0], ['半导体材料', 'BK1325']);
 check('case-insensitive code', searchIndex(SAMPLE, 'usaapl')[0], ['AAPL', 'usAAPL']);
 check('no match yields nothing', searchIndex(SAMPLE, 'zzzz'), []);
+check('index search ignores a leading dot', searchIndex(SAMPLE, 'IXIC')[0]?.[1], '.IXIC.US');
 check('blank query yields nothing', searchIndex(SAMPLE, '   '), []);
 check('limit is respected', searchIndex(SAMPLE, '茅台', 1).length, 1);
 check('malformed entries are skipped', searchIndex([null, ['ok', 'sh600000'], []], 'ok').length, 1);

@@ -1,9 +1,9 @@
-import { AdjustType, NaiveDate, Period, TradeSessions } from 'longbridge';
+import { AdjustType, Market, NaiveDate, Period, TradeSessions } from 'longbridge';
 import { readFile } from 'node:fs/promises';
-import { createQuoteContext } from './oauth.js';
+import { AuthorizationRequired, createQuoteContext } from './oauth.js';
 
 export const SYMBOL_HELP =
-  'Use Longbridge symbols such as 600519.SH, 300750.SZ, 700.HK or AAPL.US. '
+  'Use Longbridge symbols such as 600519.SH, 300750.SZ, 700.HK AAPL.US or .IXIC.US. '
   + 'Existing watchlist spellings such as sh600519, hk00700, 116.00700 and AAPL also work.';
 
 const ALIASES = { SS: 'SH', O: 'US', N: 'US', A: 'US' };
@@ -14,7 +14,7 @@ const isBeijing = (code) => /^(?:[48]|92)/.test(code);
 function marketSymbol(code, market) {
   if (market === 'HK' && /^\d{1,5}$/.test(code)) return [Number(code) + '.HK'];
   if (CHINA_MARKETS.includes(market) && /^\d{6}$/.test(code)) return [code + '.' + market];
-  if (market === 'US' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
+  if (market === 'US' && /^\.?[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
     return [code + '.US'];
   }
   return [];
@@ -23,6 +23,7 @@ function marketSymbol(code, market) {
 export function candidateSymbols(input) {
   if (typeof input !== 'string') return [];
   const value = input.trim().toUpperCase();
+  if (/^(?:US)?\.?(IXIC|NDX)(\.US)?$/.test(value)) return ['.' + value.replace(/^(?:US)?\.?/, '').replace(/\.US$/, '') + '.US'];
   const suffix = /^(.+)[.-](SH|SS|SZ|BJ|HK|US|O|N|A)$/.exec(value);
   if (suffix) return marketSymbol(suffix[1], ALIASES[suffix[2]] ?? suffix[2]);
   const legacy = /^(\d{1,3})\.(.+)$/.exec(value);
@@ -32,7 +33,10 @@ export function candidateSymbols(input) {
   }
   const prefix = /^(SH|SZ|BJ|HK)(?:[.:_-]|\s)?(\d+)$/i.exec(value)
     ?? /^(US|NASDAQ|NYSE)[.:_\s-]?([A-Z].+)$/i.exec(value);
-  if (prefix) return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(prefix[1]) ? 'US' : prefix[1]);
+  if (prefix) {
+    const market = prefix[1] === 'SZ' && /^92\d{4}$/.test(prefix[2]) ? 'BJ' : prefix[1];
+    return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(market) ? 'US' : market);
+  }
   if (/^\d{6}$/.test(value)) {
     if (isBeijing(value)) return marketSymbol(value, 'BJ');
     return (/^[569]/.test(value) ? ['SH', 'SZ'] : ['SZ', 'SH']).flatMap((market) => marketSymbol(value, market));
@@ -129,7 +133,8 @@ export function createMarketData(getContext = createQuoteContext()) {
   const metadata = new Map();
   const trends = new Map();
   const lifetime = 60_000;
-  let catalog;
+  let baseCatalog;
+  const listings = new Map();
 
   async function fetchQuotes(inputs, { signal } = {}) {
     signal?.throwIfAborted();
@@ -176,7 +181,7 @@ export function createMarketData(getContext = createQuoteContext()) {
           points: (async () => {
             const ctx = await getContext();
             try {
-              const rows = days === 5 ? await historicalPoints(ctx, symbol) : await ctx.intraday(symbol);
+              const rows = days === 5 ? await historicalPoints(ctx, symbol) : await ctx.intraday(symbol, TradeSessions.Intraday);
               return rows.map((row) => trendPoint(row, symbol)).filter(Boolean);
             } catch (error) {
               if (noQuote(error)) return [];
@@ -197,14 +202,48 @@ export function createMarketData(getContext = createQuoteContext()) {
     return [];
   }
 
-  function fetchCatalog() {
-    catalog ??= readFile(new URL('./data/securities.json', import.meta.url), 'utf8').then((json) =>
+  function marketListing(market) {
+    const cached = listings.get(market);
+    if (cached && cached.expires > Date.now()) return cached.entries;
+
+    const item = { expires: Date.now() + 60_000 };
+    item.entries = (async () => {
+      const context = await getContext();
+      const rows = await context.securityList(market);
+      if (rows.length > 0) item.expires = Date.now() + 86_400_000;
+      return rows.flatMap(({ symbol, nameCn, nameEn, nameHk }) => {
+        const names = [...new Set([nameCn, nameEn, nameHk].filter(Boolean))];
+        return (names.length ? names : [symbol]).map((name) => [name, symbol]);
+      });
+    })().catch((error) => {
+      if (error instanceof AuthorizationRequired && listings.get(market) === item) listings.delete(market);
+      return cached?.entries ?? [];
+    });
+    listings.set(market, item);
+    return item.entries;
+  }
+
+  async function fetchCatalog() {
+    baseCatalog ??= readFile(new URL('./data/securities.json', import.meta.url), 'utf8').then((json) =>
       JSON.parse(json).entries.flatMap(([name, code]) => {
-        const [symbol] = candidateSymbols(code);
+        const offlineBeijing = /^sz([48]\d{5}|92\d{4})$/i.exec(code);
+        const [symbol] = candidateSymbols(offlineBeijing ? offlineBeijing[1] + '.BJ' : code);
         return symbol === undefined ? [] : [[name, symbol]];
       }),
     );
-    return catalog;
+    const [base, us, hk, cn] = await Promise.all([
+      baseCatalog, marketListing(Market.US), marketListing(Market.HK), marketListing(Market.CN),
+    ]);
+    const entries = [
+      ['纳斯达克综合指数', '.IXIC.US'], ['NASDAQ Composite Index', '.IXIC.US'],
+      ['纳斯达克100指数', '.NDX.US'], ['NASDAQ 100 Index', '.NDX.US'],
+      ['上证指数', '000001.SH'], ['深证成指', '399001.SZ'], ['科创50', '000688.SH'],
+      ...us, ...hk, ...cn, ...base,
+    ];
+    return {
+      entries: [...new Map(entries.map((row) => [JSON.stringify(row), row])).values()],
+      complete: [us, hk, cn].every((market) => market.length > 0),
+    };
   }
 
   return { fetchQuotes, fetchTrend, fetchCatalog };

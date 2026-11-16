@@ -51,10 +51,12 @@ window.__ModuleLoader__.load({
       'panel.placeholder': '代码或证券名称，如 600519、腾讯、AAPL',
       'panel.empty': '自选股为空。在上面输入代码或证券名称后回车即可添加。',
       'panel.notFound': '未找到该证券代码或名称',
+      'focus.empty': '暂无该时段的分时数据',
       'panel.loading': '加载中…',
       'panel.error': '行情获取失败',
       'panel.retry': '重试',
       'panel.unresolved': '未找到',
+      'panel.beijingUnavailable': '北交所 · 暂无长桥报价',
       'panel.convention': '红涨绿跌',
       'panel.source': '数据源：长桥',
       'panel.drag': '拖动排序',
@@ -230,7 +232,7 @@ window.__ModuleLoader__.load({
     function marketSymbol(code, market) {
       if (market === 'HK' && /^\d{1,5}$/.test(code)) return [Number(code) + '.HK'];
       if (CHINA_MARKETS.includes(market) && /^\d{6}$/.test(code)) return [code + '.' + market];
-      if (market === 'US' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
+      if (market === 'US' && /^\.?[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$/.test(code) && !/^BK\d+$/.test(code)) {
         return [code + '.US'];
       }
       return [];
@@ -239,6 +241,7 @@ window.__ModuleLoader__.load({
     function candidateSymbols(input) {
       if (typeof input !== 'string') return [];
       const value = input.trim().toUpperCase();
+      if (/^(?:US)?\.?(IXIC|NDX)(\.US)?$/.test(value)) return ['.' + value.replace(/^(?:US)?\.?/, '').replace(/\.US$/, '') + '.US'];
       const suffix = /^(.+)[.-](SH|SS|SZ|BJ|HK|US|O|N|A)$/.exec(value);
       if (suffix) return marketSymbol(suffix[1], ALIASES[suffix[2]] ?? suffix[2]);
       const legacy = /^(\d{1,3})\.(.+)$/.exec(value);
@@ -248,7 +251,10 @@ window.__ModuleLoader__.load({
       }
       const prefix = /^(SH|SZ|BJ|HK)(?:[.:_-]|\s)?(\d+)$/i.exec(value)
         ?? /^(US|NASDAQ|NYSE)[.:_\s-]?([A-Z].+)$/i.exec(value);
-      if (prefix) return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(prefix[1]) ? 'US' : prefix[1]);
+      if (prefix) {
+        const market = prefix[1] === 'SZ' && /^92\d{4}$/.test(prefix[2]) ? 'BJ' : prefix[1];
+        return marketSymbol(prefix[2], ['NASDAQ', 'NYSE'].includes(market) ? 'US' : market);
+      }
       if (/^\d{6}$/.test(value)) {
         if (isBeijing(value)) return marketSymbol(value, 'BJ');
         return (/^[569]/.test(value) ? ['SH', 'SZ'] : ['SZ', 'SH']).flatMap((market) => marketSymbol(value, market));
@@ -256,7 +262,7 @@ window.__ModuleLoader__.load({
       return marketSymbol(value, /^\d+$/.test(value) ? 'HK' : 'US');
     }
 
-    const INDEX_KEY = 'dsh-stock-quotes/longbridge-index';
+    const INDEX_KEY = 'dsh-stock-quotes/longbridge-index-v3';
     const INDEX_TTL = 24 * 60 * 60 * 1000;
     let indexPromise = null;
 
@@ -287,7 +293,8 @@ window.__ModuleLoader__.load({
         try {
           const payload = await marketRequest('catalog');
           if (Array.isArray(payload?.entries) && payload.entries.length > 0) {
-            writeIndexCache(payload.entries);
+            if (payload.complete) writeIndexCache(payload.entries);
+            else indexPromise = null;
             return { at: Date.now(), entries: payload.entries };
           }
         } catch {
@@ -305,7 +312,9 @@ window.__ModuleLoader__.load({
      */
     function searchIndex(entries, query, limit = 8) {
       const text = String(query ?? '').trim().toLowerCase();
-      if (text === '' || !Array.isArray(entries)) return [];
+      if (text === '' || !Array.isArray(entries) || limit <= 0) return [];
+      const codeText = text.replace(/^\./, '');
+      const canonical = new Set(candidateSymbols(query));
       const scored = [];
       for (const entry of entries) {
         if (!Array.isArray(entry) || entry.length < 2) continue;
@@ -316,11 +325,17 @@ window.__ModuleLoader__.load({
         if (lowerName === text) score = 0;
         else if (lowerName.startsWith(text)) score = 1;
         else if (lowerName.includes(text)) score = 2;
-        else if (spelling.toLowerCase().startsWith(text)) score = 3;
+        else if (canonical.has(spelling)) score = 0;
+        else if (spelling.toLowerCase().replace(/^\./, '').startsWith(codeText)) score = 3;
         if (score >= 0) scored.push([score, name, spelling]);
       }
       scored.sort((left, right) => left[0] - right[0] || left[1].localeCompare(right[1], 'zh-Hans-CN'));
-      return scored.slice(0, limit).map(([, name, spelling]) => [name, spelling]);
+      const results = new Map();
+      for (const [, name, spelling] of scored) {
+        if (!results.has(spelling)) results.set(spelling, [name, spelling]);
+        if (results.size >= limit) break;
+      }
+      return [...results.values()];
     }
 
     async function fetchTrend(input, signal, days = 1) {
@@ -931,6 +946,7 @@ window.__ModuleLoader__.load({
   font-family: ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   font-size: 12px;
   line-height: 1;
+  border-top: 1px solid var(--dsw-alias-border-l2);
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   user-select: none;
   pointer-events: auto;
@@ -954,6 +970,11 @@ window.__ModuleLoader__.load({
 .dst-detail-symbol { margin-top: 2px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dst-detail-price { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 12px; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .dst-detail-price .dst-change { font-size: 12px; font-weight: 650; }
+.dst-detail-trend { margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--dsw-alias-border-l2); border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.dst-detail-trend-title { color: var(--dsw-alias-label-secondary); font-size: 11px; margin-bottom: 5px; }
+.dst-detail-trend svg { display: block; width: 100%; height: 54px; }
+.dst-detail-trend-times { display: flex; justify-content: space-between; color: var(--dsw-alias-label-secondary); font-size: 10px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.dst-detail-trend-status { color: var(--dsw-alias-label-secondary); line-height: 18px; }
 .dst-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .dst-detail-label { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dst-detail-value { font-variant-numeric: tabular-nums; }
@@ -1048,7 +1069,7 @@ window.__ModuleLoader__.load({
               }
             },
           },
-          h('span', { className: 'dst-symbol' }, quote.symbol),
+          h('span', { className: 'dst-symbol' }, quote.name || quote.symbol),
           h('span', { className: 'dst-price' }, formatNumber(quote.price)),
           h(
             'span',
@@ -1066,6 +1087,41 @@ window.__ModuleLoader__.load({
        * @returns rendered card.
        */
       function QuoteDetail({ quote, onClose }) {
+        const [trend, setTrend] = useState(null);
+        const symbol = quote.symbol;
+        useEffect(() => {
+          const controller = new AbortController();
+          const load = async () => {
+            try {
+              const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+              const points = await fetchTrend(symbol, signal);
+              if (!controller.signal.aborted) setTrend({ points });
+            } catch (error) {
+              if (!controller.signal.aborted) {
+                setTrend((previous) => previous?.points?.length ? previous : { error: describeError(error) });
+              }
+            }
+          };
+          void load();
+          const timer = window.setInterval(load, CHART_TTL);
+          return () => {
+            controller.abort();
+            window.clearInterval(timer);
+          };
+        }, [symbol]);
+
+        const points = trend?.points ?? [];
+        const path = sparklinePath(points, { kind: sessionKindOf(quote.market), width: 228, height: 50 });
+        const chart = path === ''
+          ? h('div', { className: 'dst-detail-trend-status', role: 'status' },
+            trend?.error || (trend === null ? '正在加载分时…' : '暂无分时数据'))
+          : h(React.Fragment, null,
+            h('svg', { role: 'img', 'aria-label': '当日分时图', className: toneClass(quote.changePct), viewBox: '-2 0 232 50' },
+              h('path', { d: path, fill: 'none', stroke: 'currentColor', strokeWidth: '1.5',
+                strokeLinecap: 'round', strokeLinejoin: 'round', vectorEffect: 'non-scaling-stroke' })),
+            h('div', { className: 'dst-detail-trend-times' },
+              h('span', null, points[0]?.t),
+              h('span', null, points.at(-1)?.t)));
         const rows = [
           ['今开', formatNumber(quote.open)],
           ['最高', formatNumber(quote.high)],
@@ -1100,6 +1156,8 @@ window.__ModuleLoader__.load({
               `${formatSigned(quote.change)} (${formatSigned(quote.changePct)}%)`,
             ),
           ),
+          h('div', { className: 'dst-detail-trend' },
+            h('div', { className: 'dst-detail-trend-title' }, '分时'), chart),
           h(
             'div',
             { className: 'dst-detail-grid' },
@@ -1315,7 +1373,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dst-root', ref: rootRef, role: 'region', 'aria-label': '股票行情', 'data-convention': prefs.convention },
           body,
-          selectedQuote === undefined ? null : h(QuoteDetail, { quote: selectedQuote, onClose: () => setSelected(null) }),
+          selectedQuote === undefined ? null : h(QuoteDetail, { key: selectedQuote.symbol, quote: selectedQuote, onClose: () => setSelected(null) }),
         );
       }
 
@@ -1646,7 +1704,10 @@ window.__ModuleLoader__.load({
       }, []);
 
       React.useEffect(() => {
-        const refresh = () => { void runRefresh(); };
+        const refresh = () => {
+          indexPromise = null;
+          void runRefresh();
+        };
         window.addEventListener(AUTH_EVENT, refresh);
         return () => window.removeEventListener(AUTH_EVENT, refresh);
       }, [runRefresh]);
@@ -1757,8 +1818,13 @@ window.__ModuleLoader__.load({
             const next = { ...focusRef.current, [key]: { at: Date.now(), points } };
             focusRef.current = next;
             setFocusSeries(next);
-          } catch {
-            /* keep whatever is already on screen */
+          } catch (error) {
+            if (!cancelled) {
+              setFocusSeries((previous) => ({
+                ...previous,
+                [key]: { points: previous[key]?.points ?? [], error: describeError(error) },
+              }));
+            }
           }
         };
         void load();
@@ -1964,7 +2030,8 @@ window.__ModuleLoader__.load({
               onClick: () => { setFocus(null); setHover(null); },
             }, '\u00d7')),
           geometry === null
-            ? h('div', { className: 'dsq-focus-empty' }, t('panel.loading'))
+            ? h('div', { className: 'dsq-focus-empty', role: 'status' },
+              cached?.error || t(cached === undefined ? 'panel.loading' : 'focus.empty'))
             : h('svg', {
               viewBox: `0 0 ${FOCUS_BOX.width} ${FOCUS_BOX.height}`,
               role: 'img',
@@ -2271,7 +2338,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsq-id', role: 'cell' },
           h('span', { className: 'dsq-name' }, quote === undefined ? symbol : (quote.name || quote.code)),
           h('span', { className: 'dsq-code' }, scrub === undefined
-            ? (quote === undefined ? t('panel.unresolved') : `${symbol} · ${quote.market}`)
+            ? (quote === undefined ? t(candidateSymbols(symbol)[0]?.endsWith('.BJ') ? 'panel.beijingUnavailable' : 'panel.unresolved') : `${symbol} · ${quote.market}`)
             : `${symbol} · ${scrub.t}`)),
         ...rowCells);
       };
@@ -2693,10 +2760,12 @@ window.__ModuleLoader__.load({
           'panel.placeholder': FALLBACK_TEXT['panel.placeholder'],
           'panel.empty': FALLBACK_TEXT['panel.empty'],
           'panel.notFound': FALLBACK_TEXT['panel.notFound'],
+          'focus.empty': FALLBACK_TEXT['focus.empty'],
           'panel.loading': FALLBACK_TEXT['panel.loading'],
           'panel.error': FALLBACK_TEXT['panel.error'],
           'panel.retry': FALLBACK_TEXT['panel.retry'],
           'panel.unresolved': FALLBACK_TEXT['panel.unresolved'],
+          'panel.beijingUnavailable': FALLBACK_TEXT['panel.beijingUnavailable'],
           'panel.convention': FALLBACK_TEXT['panel.convention'],
           'panel.source': FALLBACK_TEXT['panel.source'],
           'panel.drag': FALLBACK_TEXT['panel.drag'],
@@ -2778,11 +2847,13 @@ window.__ModuleLoader__.load({
           'panel.add': 'Add',
           'panel.placeholder': 'Symbol or board name, e.g. 600519, 半导体, 00700',
           'panel.empty': 'Your watchlist is empty. Type a symbol or security name above and press Enter.',
-          'panel.notFound': 'No symbol or board matches that',
+          'panel.notFound': 'No symbol or security name matches that',
+          'focus.empty': 'No intraday data for this period',
           'panel.loading': 'Loading…',
           'panel.error': 'Quote request failed',
           'panel.retry': 'Retry',
           'panel.unresolved': 'not found',
+          'panel.beijingUnavailable': 'Beijing Exchange · no Longbridge quote',
           'panel.convention': 'red up / green down',
           'panel.source': 'Source: Longbridge',
           'panel.drag': 'Drag to reorder',
