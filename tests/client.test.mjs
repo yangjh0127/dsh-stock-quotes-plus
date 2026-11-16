@@ -366,10 +366,10 @@ check('label is a thunk', typeof icon.options.label, 'function');
 
 // --- optional ticker -------------------------------------------------------
 const tickerOverlay = byName('shell.overlay')[0].component;
-check('ticker defaults to hidden', tickerOverlay(), null);
+check('ticker defaults to visible', tickerOverlay()?.type?.name, 'TickerBar');
 const tickerCard = byName('plugins.bundle.config')[0].component;
 const toggle = () => collect(tickerCard({ t })).find((node) => node.type === 'label' && node.children.some((child) => child?.children?.includes(t('settings.ticker')))).children.find((node) => node.type === 'input');
-check('ticker switch starts unchecked', toggle().props.checked, false);
+check('ticker switch starts checked', toggle().props.checked, true);
 toggle().props.onChange({ target: { checked: true } });
 check('ticker switch persists and mounts ticker', tickerOverlay()?.type?.name, 'TickerBar');
 check('ticker has no independent settings button', renderText(tickerOverlay()).includes('行情设置'), false);

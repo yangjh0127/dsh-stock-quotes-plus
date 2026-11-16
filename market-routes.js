@@ -9,7 +9,7 @@ function send(response, status, data) {
 
 export function registerMarketRoutes(ctx, data, auth) {
   const routes = {
-    quotes: (params) => data.fetchQuotes(params.getAll('symbol')),
+    quotes: (params) => data.fetchQuotes(params.getAll('symbol'), { includeIntraday: true }),
     trend: async (params) => ({ points: await data.fetchTrend(params.get('symbol'), params.get('days') === '5' ? 5 : 1) }),
     catalog: () => data.fetchCatalog(),
   };

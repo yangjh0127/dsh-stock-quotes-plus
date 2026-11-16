@@ -103,6 +103,28 @@ function trendPoint(row, symbol) {
   };
 }
 
+function dayPoint(row, symbol) {
+  if (!(row.timestamp instanceof Date) || !Number.isFinite(row.timestamp.getTime())) return null;
+  const point = trendPoint(row, symbol);
+  return point && { ...point, minute: Math.floor(row.timestamp.getTime() / 60_000) };
+}
+
+function mergeDayPoints(series, points) {
+  for (const point of points) {
+    if (point.day < series.day) continue;
+    if (point.day > series.day) {
+      series.day = point.day;
+      series.points.clear();
+    }
+    const previous = series.points.get(point.minute);
+    series.points.set(point.minute, {
+      ...point,
+      avg: point.avg ?? previous?.avg,
+      vol: point.vol ?? previous?.vol,
+    });
+  }
+}
+
 function noQuote(error) {
   // The N-API SDK may include the business code in the error message.
   return /\b30160[23]\b/.test(String(error?.code ?? '') + ' ' + String(error?.message ?? ''));
@@ -136,14 +158,62 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
   const quoteCache = new Map();
   const pendingQuotes = new Map();
   const trends = new Map();
+  const daily = new Map();
   let baseCatalog;
   const listings = new Map();
+
+  function dailyEntry(symbol) {
+    let entry = daily.get(symbol);
+    if (!entry) {
+      if (daily.size >= 4096) daily.delete(daily.keys().next().value);
+      entry = { day: '', points: new Map(), seeded: false };
+      daily.set(symbol, entry);
+    }
+    return entry;
+  }
+
+  function recordDailyQuote(row) {
+    if (!row) return;
+    const point = dayPoint({ price: row.lastDone, timestamp: row.timestamp }, row.symbol);
+    if (!point) return;
+    const entry = dailyEntry(row.symbol);
+    const timestamp = row.timestamp.getTime();
+    if (timestamp < (entry.latestTimestamp ?? 0)) return;
+    entry.latestTimestamp = timestamp;
+    entry.latest = point;
+    mergeDayPoints(entry, [point]);
+  }
+
+  async function fetchDaily(symbol) {
+    const entry = dailyEntry(symbol);
+    if (!entry.seeded) {
+      entry.pending ??= (async () => {
+        const ctx = await getContext();
+        let rows = [];
+        try {
+          rows = await ctx.intraday(symbol, TradeSessions.Intraday);
+        } catch (error) {
+          if (!noQuote(error)) throw error;
+        }
+        // Preserve quotes already collected while the historical seed was loading.
+        const live = [...entry.points.values()];
+        entry.points.clear();
+        entry.day = '';
+        mergeDayPoints(entry, rows.map((row) => dayPoint(row, symbol)).filter(Boolean));
+        mergeDayPoints(entry, live);
+        entry.seeded = true;
+      })().finally(() => { entry.pending = undefined; });
+      await entry.pending;
+    }
+    return [...entry.points.values()].sort((a, b) => a.minute - b.minute);
+  }
 
   function loadQuoteBatch(symbols, phases) {
     const batch = (async () => {
       const ctx = await getContext();
       const rows = new Map((await ctx.quote(symbols)).map((row) => [row.symbol, row]));
       const at = Date.now();
+      for (const row of rows.values()) recordDailyQuote(row);
       const missing = symbols.filter((symbol) => rows.has(symbol) && !metadata.has(symbol));
       if (missing.length > 0) {
         try {
@@ -164,7 +234,7 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
     return batch;
   }
 
-  async function fetchQuotes(inputs, { signal } = {}) {
+  async function fetchQuotes(inputs, { signal, includeIntraday = false } = {}) {
     signal?.throwIfAborted();
     const list = (Array.isArray(inputs) ? inputs : [inputs]).filter((input) => typeof input === 'string' && input.trim()).map((input) => input.trim());
     const plans = list.map(candidateSymbols);
@@ -197,6 +267,7 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
     signal?.throwIfAborted();
     const quotes = [];
     const unresolved = [];
+    const intraday = [];
     let asOf = Infinity;
     for (const [index, spelling] of list.entries()) {
       const symbol = plans[index].find((candidate) => rows.get(candidate)?.row);
@@ -204,16 +275,26 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
       else {
         const { row, at } = rows.get(symbol);
         quotes.push(normalizeQuote(row, metadata.get(symbol), spelling));
+        const point = includeIntraday ? daily.get(symbol)?.latest : undefined;
+        if (point) intraday.push({ symbol: spelling, point });
         asOf = Math.min(asOf, at);
       }
     }
-    return { quotes, unresolved, asOf: new Date(asOf === Infinity ? Date.now() : asOf).toISOString() };
+    return { quotes, unresolved, asOf: new Date(asOf === Infinity ? Date.now() : asOf).toISOString(), ...(includeIntraday ? { intraday } : {}) };
   }
 
   async function fetchTrend(input, days) {
-    const lifetime = days === 5 ? 300_000 : 60_000;
+    const symbols = candidateSymbols(input);
+    if (days !== 5) {
+      for (const symbol of symbols) {
+        const points = await fetchDaily(symbol);
+        if (points.length > 0) return points;
+      }
+      return [];
+    }
+    const lifetime = 300_000;
     const phases = new Map();
-    for (const symbol of candidateSymbols(input)) {
+    for (const symbol of symbols) {
       const market = marketOf(symbol);
       if (!phases.has(market)) phases.set(market, await closedKey(market));
       const phase = phases.get(market);
@@ -227,7 +308,7 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
           points: (async () => {
             const ctx = await getContext();
             try {
-              const rows = days === 5 ? await historicalPoints(ctx, symbol) : await ctx.intraday(symbol, TradeSessions.Intraday);
+              const rows = await historicalPoints(ctx, symbol);
               return rows.map((row) => trendPoint(row, symbol)).filter(Boolean);
             } catch (error) {
               if (noQuote(error)) return [];

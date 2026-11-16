@@ -19,8 +19,6 @@ window.__ModuleLoader__.load({
     const PKG = 'dsh-stock-quotes-plus';
     const STORAGE_KEY = PKG + '/watchlist';
     const previousStorageNamespace = PKG.replace(/-plus$/, '');
-    const CHART_TTL = 60_000;
-    const SPARKLINE_TTL = 180_000;
     /** At most this many intraday requests in flight at once. */
     const TREND_CONCURRENCY = 4;
     const DEFAULT_SYMBOLS = ['sh000001', 'sh600519', 'sz300750', 'hk00700', 'usAAPL'];
@@ -739,13 +737,93 @@ window.__ModuleLoader__.load({
     async function fetchQuotes(inputs, { signal } = {}) {
       const quotes = [];
       const unresolved = [];
+      const intraday = [];
       for (let start = 0; start < inputs.length; start += 100) {
         const params = inputs.slice(start, start + 100).map((symbol) => ['symbol', symbol]);
         const batch = await marketRequest('quotes', params, signal);
         quotes.push(...batch.quotes);
         unresolved.push(...batch.unresolved);
+        intraday.push(...(batch.intraday ?? []));
       }
-      return { quotes, unresolved };
+      return { quotes, unresolved, intraday };
+    }
+
+    const dailySeries = new Map();
+    const dailyListeners = new Set();
+    const seedQueue = new Set();
+    let seeding = false;
+
+    function dailyEntry(symbol) {
+      let entry = dailySeries.get(symbol);
+      if (!entry) {
+        entry = { points: [], seeded: false };
+        dailySeries.set(symbol, entry);
+      }
+      return entry;
+    }
+
+    function publishDaily() {
+      for (const listener of dailyListeners) listener();
+    }
+
+    function mergeDaily(symbol, points, seed = false) {
+      const entry = dailyEntry(symbol);
+      const previous = entry.points.at(-1);
+      if (!seed && points.length === 1 && previous?.minute === points[0].minute && previous.v === points[0].v) return false;
+      const merged = new Map();
+      let day = '';
+      const combined = seed ? [...points, ...entry.points] : [...entry.points, ...points];
+      for (const point of combined) {
+        if (!Number.isInteger(point.minute) || point.day < day) continue;
+        if (point.day > day) {
+          day = point.day;
+          merged.clear();
+        }
+        const existing = merged.get(point.minute);
+        merged.set(point.minute, {
+          ...point,
+          vol: point.vol ?? existing?.vol,
+          avg: point.avg ?? existing?.avg,
+        });
+      }
+      entry.points = [...merged.values()].sort((left, right) => left.minute - right.minute);
+      return true;
+    }
+
+    function loadDaily(symbol) {
+      const entry = dailyEntry(symbol);
+      if (entry.seeded) return Promise.resolve();
+      entry.pending ??= fetchTrend(symbol).then((points) => {
+        mergeDaily(symbol, points, true);
+        entry.seeded = true;
+        entry.error = '';
+      }).catch((error) => {
+        entry.error = describeError(error);
+      }).finally(() => {
+        entry.pending = undefined;
+        publishDaily();
+      });
+      return entry.pending;
+    }
+
+    function preloadDaily(symbols, retry = false) {
+      for (const symbol of symbols) {
+        const entry = dailyEntry(symbol);
+        if (!entry.seeded && !entry.pending && (retry || !entry.error)) seedQueue.add(symbol);
+      }
+      if (seeding || seedQueue.size === 0) return;
+      seeding = true;
+      void (async () => {
+        try {
+          while (seedQueue.size > 0) {
+            const batch = [...seedQueue];
+            seedQueue.clear();
+            await mapLimit(batch, TREND_CONCURRENCY, loadDaily);
+          }
+        } finally {
+          seeding = false;
+        }
+      })();
     }
 
     const watchlistListeners = new Set();
@@ -762,6 +840,12 @@ window.__ModuleLoader__.load({
 
       const request = fetchQuotes(symbols, { signal: AbortSignal.timeout(12000) }).then((result) => {
         if (key === JSON.stringify(readWatchlist())) {
+          let changed = false;
+          for (const { symbol, point } of result.intraday) {
+            changed = mergeDaily(symbol, [point]) || changed;
+          }
+          if (changed) publishDaily();
+          preloadDaily(symbols);
           latestQuotes = { key, quotes: result.quotes, at: Date.now() };
           for (const listener of quoteListeners) listener(latestQuotes);
         }
@@ -865,7 +949,7 @@ window.__ModuleLoader__.load({
       return {
         label: typeof source.label === 'string' ? source.label : DEFAULT_PREFS.label,
         chart: source.chart !== false,
-        tickerEnabled: source.tickerEnabled === true,
+        tickerEnabled: source.tickerEnabled !== false,
         refreshSeconds,
         convention: source.convention === 'intl' ? 'intl' : 'cn',
         columns,
@@ -1087,37 +1171,21 @@ window.__ModuleLoader__.load({
        * @returns rendered card.
        */
       function QuoteDetail({ quote, onClose }) {
-        const [trend, setTrend] = useState(null);
         const symbol = quote.symbol;
+        const [trend, setTrend] = useState(null);
         useEffect(() => {
-          const controller = new AbortController();
-          const load = async () => {
-            if (document.visibilityState === 'hidden') return;
-            try {
-              const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
-              const points = await fetchTrend(symbol, signal);
-              if (!controller.signal.aborted) setTrend({ points });
-            } catch (error) {
-              if (!controller.signal.aborted) {
-                setTrend((previous) => previous?.points?.length ? previous : { error: describeError(error) });
-              }
-            }
-          };
-          void load();
-          const timer = window.setInterval(load, CHART_TTL);
-          document.addEventListener('visibilitychange', load);
-          return () => {
-            controller.abort();
-            window.clearInterval(timer);
-            document.removeEventListener('visibilitychange', load);
-          };
+          const sync = () => setTrend({ ...dailyEntry(symbol) });
+          dailyListeners.add(sync);
+          sync();
+          preloadDaily([symbol], true);
+          return () => dailyListeners.delete(sync);
         }, [symbol]);
 
         const points = trend?.points ?? [];
         const path = sparklinePath(points, { kind: sessionKindOf(quote.market), width: 228, height: 50 });
         const chart = path === ''
           ? h('div', { className: 'dst-detail-trend-status', role: 'status' },
-            trend?.error || (trend === null ? '正在加载分时…' : '暂无分时数据'))
+            trend?.error || (trend?.seeded ? '暂无分时数据' : '正在加载分时…'))
           : h(React.Fragment, null,
             h('svg', { role: 'img', 'aria-label': '当日分时图', className: toneClass(quote.changePct), viewBox: '-2 0 232 50' },
               h('path', { d: path, fill: 'none', stroke: 'currentColor', strokeWidth: '1.5',
@@ -1382,6 +1450,18 @@ window.__ModuleLoader__.load({
 
       return function TickerOverlay() {
         const [enabled, setEnabled] = useState(() => readPrefs().tickerEnabled);
+        useEffect(() => {
+          let active = true;
+          const warm = () => preloadDaily(readWatchlist(), true);
+          void marketRequest('auth/status').then(({ state }) => {
+            if (active && (state === 'saved' || state === 'connected')) warm();
+          }).catch(() => {});
+          window.addEventListener(AUTH_EVENT, warm);
+          return () => {
+            active = false;
+            window.removeEventListener(AUTH_EVENT, warm);
+          };
+        }, []);
         useEffect(() => {
           const sync = () => setEnabled(readPrefs().tickerEnabled);
           const unsubscribe = onPrefsChange(sync);
@@ -1674,11 +1754,8 @@ window.__ModuleLoader__.load({
       const [focusSeries, setFocusSeries] = React.useState({});
       const [hover, setHover] = React.useState(null);
       const [rowHover, setRowHover] = React.useState(null);
-      const focusRef = React.useRef({});
       const symbolsRef = React.useRef(symbols);
       symbolsRef.current = symbols;
-      const trendsRef = React.useRef({});
-      const scrollRef = React.useRef(null);
       const menuRef = React.useRef(null);
       const headCheckRef = React.useRef(null);
       const noticeTimer = React.useRef(null);
@@ -1758,104 +1835,36 @@ window.__ModuleLoader__.load({
         };
       }, [auto, runRefresh, refreshMs]);
 
-      // Fetch mini charts only for rows in the scroll viewport.
       React.useEffect(() => {
-        const root = scrollRef.current;
-        if (!chart || !root) return undefined;
-        const visible = new Set();
-        let cancelled = false;
-        let loading = false;
-        let timer = null;
-        const load = async () => {
-          if (cancelled || loading || document.visibilityState === 'hidden') return;
-          const now = Date.now();
-          const wanted = [...visible].filter((symbol) => now - (trendsRef.current[symbol]?.at ?? 0) >= SPARKLINE_TTL).slice(0, 40);
-          if (wanted.length === 0) return;
-          loading = true;
-          try {
-            const settled = await mapLimit(wanted, TREND_CONCURRENCY, async (symbol) => {
-              if (cancelled || !visible.has(symbol) || document.visibilityState === 'hidden') return null;
-              try {
-                return [symbol, await fetchTrend(symbol)];
-              } catch {
-                return [symbol, trendsRef.current[symbol]?.points ?? []];
-              }
-            });
-            if (cancelled) return;
-            const next = { ...trendsRef.current };
-            for (const item of settled) {
-              if (item !== null) next[item[0]] = { at: Date.now(), points: item[1] };
-            }
-            trendsRef.current = next;
-            setTrends(next);
-          } finally {
-            loading = false;
-          }
-        };
-        const schedule = () => {
-          if (timer !== null) window.clearTimeout(timer);
-          timer = window.setTimeout(() => { void load(); }, 100);
-        };
-        const observer = typeof window.IntersectionObserver === 'function'
-          ? new window.IntersectionObserver((entries) => {
-            for (const entry of entries) {
-              const symbol = entry.target.dataset.trendSymbol;
-              if (entry.isIntersecting) visible.add(symbol);
-              else visible.delete(symbol);
-            }
-            schedule();
-          }, { root })
-          : null;
-        for (const cell of root.querySelectorAll('[data-trend-symbol]')) {
-          if (observer) observer.observe(cell);
-          else visible.add(cell.dataset.trendSymbol);
-        }
-        if (!observer) schedule();
-        const interval = window.setInterval(load, 5_000);
-        document.addEventListener('visibilitychange', schedule);
-        return () => {
-          cancelled = true;
-          observer?.disconnect();
-          document.removeEventListener('visibilitychange', schedule);
-          if (timer !== null) window.clearTimeout(timer);
-          window.clearInterval(interval);
-        };
-      }, [chart, symbols]);
+        const sync = () => setTrends(Object.fromEntries([...dailySeries].map(([symbol, entry]) => [symbol, { ...entry }])));
+        dailyListeners.add(sync);
+        sync();
+        return () => dailyListeners.delete(sync);
+      }, []);
 
-      // Five-session charts load only when selected. The host decides whether
-      // to return a cached market-session snapshot.
+      // Today's chart uses the same series as the row and ticker. Historical
+      // charts are the only requests tied to opening the expanded chart.
       React.useEffect(() => {
         if (focus === null) return undefined;
-        const key = `${focus}|${focusDays}`;
+        if (focusDays === 1) {
+          preloadDaily([focus], true);
+          return undefined;
+        }
+        const key = focus + '|5';
         const controller = new AbortController();
-        const load = async () => {
-          const cached = focusRef.current[key];
-          if (focusDays === 1 && (document.visibilityState === 'hidden' || (cached && Date.now() - cached.at < CHART_TTL))) return;
-          try {
-            const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
-            const points = await fetchTrend(focus, signal, focusDays);
-            if (controller.signal.aborted) return;
-            const next = { ...focusRef.current, [key]: { at: Date.now(), points } };
-            focusRef.current = next;
-            setFocusSeries(next);
-          } catch (error) {
-            if (!controller.signal.aborted) {
-              setFocusSeries((previous) => ({
-                ...previous,
-                [key]: { points: previous[key]?.points ?? [], error: describeError(error) },
-              }));
-            }
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+        void fetchTrend(focus, signal, 5).then((points) => {
+          if (!controller.signal.aborted) {
+            setFocusSeries((previous) => ({ ...previous, [key]: { points } }));
           }
-        };
-        void load();
-        if (focusDays === 5) return () => controller.abort();
-        const id = window.setInterval(load, CHART_TTL);
-        document.addEventListener('visibilitychange', load);
-        return () => {
-          controller.abort();
-          document.removeEventListener('visibilitychange', load);
-          window.clearInterval(id);
-        };
+        }).catch((error) => {
+          if (!controller.signal.aborted) {
+            setFocusSeries((previous) => ({
+              ...previous, [key]: { points: previous[key]?.points ?? [], error: describeError(error) },
+            }));
+          }
+        });
+        return () => controller.abort();
       }, [focus, focusDays]);
 
       // Close the context menu on anything that would leave it stranded.
@@ -2000,7 +2009,7 @@ window.__ModuleLoader__.load({
        * crosshair that reads out the value under the pointer.
        */
       const buildFocusPanel = () => {
-        const cached = focusSeries[`${focus}|${focusDays}`];
+        const cached = focusDays === 1 ? trends[focus] : focusSeries[`${focus}|${focusDays}`];
         const points = cached === undefined ? [] : cached.points;
         const quote = quoteBySymbol.get(focus);
         const kind = sessionKindOf(quote === undefined ? undefined : quote.market);
@@ -2051,7 +2060,7 @@ window.__ModuleLoader__.load({
             }, '\u00d7')),
           geometry === null
             ? h('div', { className: 'dsq-focus-empty', role: 'status' },
-              cached?.error || t(cached === undefined ? 'panel.loading' : 'focus.empty'))
+              cached?.error || t(!cached || (focusDays === 1 && !cached.seeded) ? 'panel.loading' : 'focus.empty'))
             : h('svg', {
               viewBox: `0 0 ${FOCUS_BOX.width} ${FOCUS_BOX.height}`,
               role: 'img',
@@ -2159,7 +2168,6 @@ window.__ModuleLoader__.load({
         // lands: a missing cell would shift every later column in that row.
         return h('div', {
           className: 'dsq-chart',
-          'data-trend-symbol': symbol,
           role: 'cell',
           onPointerMove: (event) => {
             if (points.length < 2) return;
@@ -2459,7 +2467,7 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null,
         h('style', { dangerouslySetInnerHTML: { __html: CSS } }),
         h('div', { className: 'dsq-root', 'data-convention': convention },
-          h('div', { className: 'dsq-scroll', ref: scrollRef },
+          h('div', { className: 'dsq-scroll' },
             h('div', { className: 'dsq-inner' },
               h('div', { className: 'dsq-head' },
                 h('h1', { className: 'dsq-title' }, displayName(t)),

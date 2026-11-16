@@ -7,7 +7,7 @@ A DeepSeek Harness plugin for watchlist quotes and intraday charts from Longbrid
 ## Features
 
 - **Data panel** — search by name or symbol, manage the watchlist and select a row to see the latest session or the last five trading sessions.
-- **Top ticker** — toggle it from the Data toolbar. It scrolls security names, prices and price changes. Select a name to open a quote detail card with an intraday chart. The panel and ticker share a watchlist and refresh interval.
+- **Top ticker** — visible by default and configurable from the Data toolbar. It scrolls security names, prices and price changes. Select a name to open a quote detail card with an intraday chart. The panel and ticker share a watchlist and refresh interval.
 - **Agent quotes** — `stock_quote` supports batches. Without arguments it uses the tool's default symbols configured in the DSH profile.
 
 ## Install and sign in
@@ -43,7 +43,7 @@ Local sign-in uses `http://localhost:60355/callback`. For a remote host, forward
 
 The bundled index makes Beijing Exchange symbols searchable. The panel shows when Longbridge has no quote for a symbol. Quote delays depend on [OpenAPI market data permissions](https://open.longbridge.com/docs/quote/overview).
 
-The DSH host reuses the last quote and intraday series while each market is closed and resumes fetching at the next trading session. This includes the Hong Kong and mainland lunch breaks. The panel loads mini charts for visible rows, and the five-session chart loads only when opened and reuses its snapshot while the market is closed.
+The DSH host reuses the last quote and intraday series while each market is closed and resumes fetching at the next trading session. This includes the Hong Kong and mainland lunch breaks. Startup seeds the intraday chart once for each watchlist symbol, then updates minute points from existing quote requests. Missed minutes do not trigger a backfill request. The five-session chart loads on demand and reuses its snapshot while the market is closed.
 
 ## Updates and licensing
 

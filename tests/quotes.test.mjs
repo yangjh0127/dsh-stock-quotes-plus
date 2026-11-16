@@ -89,7 +89,7 @@ await data.fetchQuotes(['hk00700', 'AAPL']);
 assert.equal(quoteCalls, 1);
 assert.equal(staticCalls, 1);
 await assert.rejects(data.fetchQuotes(['AAPL'], { signal: AbortSignal.abort() }), { name: 'AbortError' });
-assert.deepEqual(await data.fetchTrend('AAPL', 1), [{ day: '2026-11-16', t: '05:00', v: 200.5, vol: 18, avg: 201 }]);
+assert.deepEqual(await data.fetchTrend('AAPL', 1), [{ day: '2026-11-16', t: '05:00', v: 200.5, vol: 18, avg: 201, minute: Date.parse('2026-11-16T21:00:00Z') / 60000 }]);
 await data.fetchTrend('AAPL.US', 1);
 assert.equal(trendCalls, 1);
 assert.deepEqual(await data.fetchTrend('hk00700', 5), [{ day: '2026-11-16', t: '10:00', v: 380, vol: 100, avg: undefined }]);
@@ -156,12 +156,12 @@ await sessionData.fetchQuotes(['600519.SH']);
 await sessionData.fetchTrend('600519.SH', 1);
 await sessionData.fetchTrend('600519.SH', 1);
 assert.deepEqual(closedBatches, [['600519.SH', 'AAPL.US'], ['600519.SH']]);
-assert.equal(closedTrendCalls, 2);
+assert.equal(closedTrendCalls, 1);
 phase = undefined;
 await sessionData.fetchQuotes(['600519.SH']);
 await sessionData.fetchTrend('600519.SH', 1);
 assert.equal(closedBatches.length, 3);
-assert.equal(closedTrendCalls, 3);
+assert.equal(closedTrendCalls, 1);
 assert.equal(historyCalls, 0);
 for (const phaseKey of ['2026-11-13:break', '2026-11-13:close', undefined]) {
   phase = phaseKey;
@@ -169,6 +169,54 @@ for (const phaseKey of ['2026-11-13:break', '2026-11-13:close', undefined]) {
   assert.deepEqual(await sessionData.fetchTrend('sh600519', 5), snapshot);
 }
 assert.equal(historyCalls, 3);
+
+let dailySeeds = 0;
+let liveTime = '2026-11-16T01:31:05Z';
+let livePrice = '11';
+let now = Date.now();
+const realNow = Date.now;
+const minuteData = createMarketData(async () => ({
+  async quote() { return [{ symbol: '600519.SH', lastDone: livePrice, timestamp: new Date(liveTime) }]; },
+  async staticInfo() { return []; },
+  async intraday() {
+    dailySeeds++;
+    return [
+      { price: '10', timestamp: new Date('2026-11-16T01:30:00Z'), volume: 120 },
+      { price: '10.5', timestamp: new Date('2026-11-16T01:31:00Z'), volume: 75 },
+    ];
+  },
+}));
+try {
+  Date.now = () => now;
+  await minuteData.fetchQuotes(['sh600519']);
+  const [firstSeed, secondSeed] = await Promise.all([minuteData.fetchTrend('sh600519', 1), minuteData.fetchTrend('600519.SH', 1)]);
+  assert.deepEqual(firstSeed, secondSeed);
+  assert.deepEqual(firstSeed.map(({ v }) => v), [10, 11]);
+  assert.equal(firstSeed[1].vol, 75);
+  assert.equal(dailySeeds, 1);
+
+  now += 10_000;
+  livePrice = '12';
+  liveTime = '2026-11-16T01:31:15Z';
+  const update = await minuteData.fetchQuotes(['sh600519'], { includeIntraday: true });
+  assert.equal(update.intraday[0].symbol, 'sh600519');
+  assert.equal(update.intraday[0].point.v, 12);
+
+  now += 60_000;
+  livePrice = '13';
+  liveTime = '2026-11-16T01:32:15Z';
+  await minuteData.fetchQuotes(['600519.SH']);
+  assert.deepEqual((await minuteData.fetchTrend('600519.SH', 1)).map(({ v }) => v), [10, 12, 13]);
+
+  now += 86_400_000;
+  livePrice = '14';
+  liveTime = '2026-11-17T01:30:15Z';
+  await minuteData.fetchQuotes(['600519.SH']);
+  assert.deepEqual((await minuteData.fetchTrend('600519.SH', 1)).map(({ v }) => v), [14]);
+  assert.equal(dailySeeds, 1);
+} finally {
+  Date.now = realNow;
+}
 
 const handlers = new Map();
 registerMarketRoutes({
