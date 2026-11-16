@@ -52,7 +52,7 @@ Report abusive, harassing, or otherwise unacceptable behavior to the maintainer
 privately:
 
 - prefer a GitHub Security Advisory
-  <https://github.com/AhaCrazy/dsh-stock-quotes/security/advisories> when the
+  <https://github.com/yangjh0127/dsh-stock-quotes-plus/security/advisories> when the
   report is sensitive;
 - otherwise open a minimal issue that only states you have a conduct report and
   asks for a private channel — without details.

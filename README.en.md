@@ -1,186 +1,50 @@
 # dsh-stock-quotes-plus
 
-[中文](README.md) | **English**
+[中文](README.md) · English
 
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+A DeepSeek Harness plugin for watchlist quotes and intraday charts from Longbridge OpenAPI. The `stock_quote` tool brings the same quote source into conversations.
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that shows **live quotes for a watchlist of stocks** in a sidebar data panel, and registers a `stock_quote` tool so the agent can answer "what is 贵州茅台 at right now" inside the conversation.
+## Features
 
-- **Panel**: A-shares, Hong Kong and US symbols in one list — price, change, change %, open / high / low, turnover; 15 s auto-refresh; right-click menu, drag to reorder, multi-select batch actions.
-- **Tool**: `stock_quote` reads one or several symbols (or the configured watchlist) in a single batched request.
-- **Neutral by default**: the sidebar entry is called `数据` ("Data") with a plain table glyph, and the display name is configurable. It reads as a generic data view rather than a stock ticker.
+- **Data panel** — search by name or symbol, manage the watchlist and select a row to see the latest session or the last five trading sessions.
+- **Top ticker** — toggle it from the Data toolbar. It scrolls security names, prices and price changes. Select a name to open a quote detail card with an intraday chart. The panel and ticker share a watchlist and refresh interval.
+- **Agent quotes** — `stock_quote` supports batches. Without arguments it uses the tool's default symbols configured in the DSH profile.
 
-> Quotes are delayed/snapshot data from a public endpoint. For information only — **not investment advice**, not for trading decisions.
+## Install and sign in
 
-## Requirements
-
-- DeepSeek Harness (0.2.x, with the `plugin_manager` tool)
-- Node.js 20+ and an OpenAPI-enabled Longbridge account with quote permissions.
-
-## Install
-
-Clone the repository:
+Requires DeepSeek Harness 0.2.x, Node.js 20 or later, and an OpenAPI-enabled Longbridge account with quote access.
 
 ```bash
 git clone https://github.com/yangjh0127/dsh-stock-quotes-plus.git
 ```
 
-Install the local directory from a DSH Web session:
+Install the cloned directory in a DSH session:
 
 ```
-plugin_manager  action: install_bundle  target: <absolute-path>/dsh-stock-quotes-plus
+plugin_manager action: install_bundle target: <absolute-path-to-checkout>
 ```
 
-When switching from the upstream panel, uninstall it first to avoid duplicate sidebar and stock_quote registrations. Existing browser watchlists and panel preferences carry over.
+1. Open **Data** in the DSH sidebar and select **Sign in to Longbridge**. The same button is available in the plugin settings.
+2. Complete OAuth 2.0 authorization on the official Longbridge page. If the popup is blocked, select **Open Longbridge authorization**.
+3. Return to DSH. The panel refreshes automatically. The SDK stores and refreshes tokens on the DSH host.
 
-### Longbridge OAuth 2.0
+Local sign-in uses `http://localhost:60355/callback`. For a remote host, forward the callback port or run `npm ci` and `npm run authorize -- YOUR_CLIENT_ID` under the same system user as DSH, then configure `LONGBRIDGE_CLIENT_ID`.
 
-1. In DSH, open **Plugins → Data panel → Panel settings** and select **Sign in to Longbridge**. The Data toolbar offers the same button.
-2. Complete authorization on the official Longbridge page and return to DSH. The panel refreshes automatically. If the popup is blocked, use **Open Longbridge authorization**.
+## Symbol examples
 
-The host registers a public OAuth client on the first click using the [official Longbridge flow](https://open.longbridge.com/docs/getting-started). The SDK stores and refreshes tokens locally. The browser must be able to reach the host's loopback callback at `http://localhost:60355/callback`. On a remote deployment, forward that port or run `npm run authorize -- YOUR_CLIENT_ID` on the host under the same system user and set `LONGBRIDGE_CLIENT_ID`. Existing `longbridgeClientId` settings still work.
+| Market | Name or symbol |
+| --- | --- |
+| US | Apple `AAPL.US`, Nasdaq Composite `.IXIC.US` |
+| Hong Kong | Tencent `700.HK` |
+| Shanghai | SSE Composite `000001.SH`, Kweichow Moutai `600519.SH` |
+| Shenzhen | SZSE Component `399001.SZ`, CATL `300750.SZ` |
+| STAR Market | SMIC `688981.SH` |
+| Beijing Exchange | `920799.BJ` |
 
-## Top stock ticker
+The bundled index makes Beijing Exchange symbols searchable. The panel shows when Longbridge has no quote for a symbol. Quote delays depend on [OpenAPI market data permissions](https://open.longbridge.com/docs/quote/overview).
 
-In DSH Web, open **Data** in the sidebar and select **Show top stock ticker** in its toolbar. The same option is available in the bundle settings. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
+## Updates and licensing
 
-The ticker shares the panel's Longbridge quotes, watchlist order, refresh interval, up/down colors and price-move threshold. Add, remove or reorder stocks in the panel to update the ticker. Click a security name to view its intraday chart in the detail card.
+Update the checkout, reinstall the plugin and refresh DSH. See the [changelog](CHANGELOG.md).
 
-Based on [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes), with a ticker adapted from [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker). See [LICENSE](LICENSE) and [LICENSE-ticker](LICENSE-ticker).
-
-## Panel actions
-
-| Action | How |
-|---|---|
-| Add | Type a symbol or security name in the top input, press Enter |
-| **Delete** | **Right-click a row** → menu → Delete (there is no per-row ✕ button) |
-| **Reorder** | Drag the ⠿ handle; a brand-colored line shows the drop position — or use the right-click menu's move items |
-| **Multi-select** | Checkbox on each row; the header checkbox selects / clears everything |
-| **Batch** | With ≥1 selected, a bar appears: delete selected / move to top / move to bottom / clear |
-| Other menu items | Copy symbols (newline-joined), select all, clear selection |
-| **Charts** | The "Charts" button in the toolbar toggles a per-row intraday line |
-
-The context menu is **selection-aware**: if the right-clicked row is part of a multi-selection, delete/move/copy act on the whole selection and the labels carry the count; otherwise they act on that one row.
-
-Order and membership persist in the browser (`localStorage`, key `dsh-stock-quotes/watchlist`). Rows always render in watchlist order and quotes are mapped by symbol, so reordering can never desynchronize a code from its price.
-
-## Charts
-
-The **Charts** button in the toolbar toggles a per-row **intraday line** (today's session). The choice is stored in `localStorage` (`chart` in `dsh-stock-quotes/prefs`) and is **on by default**.
-
-- The current session uses Longbridge intraday data. The five-session view uses Longbridge one-minute candles.
-- **The x axis is the whole session, not the data stretched to fill the box**: A-shares are 240 minutes (09:30–11:30, 13:00–15:00), Hong Kong 330 (09:30–12:00, 13:00–16:00), US 390 (21:30–04:00 Beijing time). At 11:30 the line therefore stops half way and the blank right side is the part that has not traded yet; it only fills at the close
-- Refreshed every 60 seconds, deliberately not tied to the 15-second quote tick, so it cannot become a request storm
-- Colour follows the day's move — red up, green down, neutral when flat — matching the number columns
-- With charts off, **no trend request is made**; only the numbers remain
-- A row whose series has not arrived yet keeps an empty cell, so columns never shift
-- **Hover a sparkline to read it**: a crosshair follows the pointer and that row's price / change / % cells temporarily show the minute under it (the code line shows the timestamp, e.g. `sh600519 · 11:30`), snapping back when the pointer leaves
-
-### Focus chart (click a row)
-
-The sparkline only shows shape. **Click any row** and a full-width chart for that symbol opens above the table; click the row again or press × to close it.
-
-- Y axis ticks on both the scale and the grid, plus a dashed **previous-close** line
-- The time axis follows the instrument's session: A-shares `09:30 / 10:30 / 11:30·13:00 / 14:00 / 15:00`; Hong Kong and US label their own sessions
-- **Hover crosshair**: the vertical line and dot snap to the nearest minute and the line underneath reads `time · price · ±% vs previous close · average · volume`
-- The header shows the name, the current price and the session's **high / low**
-- **1D / 5D** switch: five-day mode splits by trading day and labels dates instead of the clock
-- One-day mode also draws the **average price line** (dashed)
-
-## Settings
-
-Everything lives on **Settings → Plugins → "数据面板"** and applies immediately:
-
-| Setting | Meaning |
-|---|---|
-| Display name | One name for the sidebar label, panel heading and notices, default `数据`. Whitespace-collapsed, capped at 24 characters |
-| Refresh interval | 5 / 10 / 15 / 30 / 60 s; consecutive failures back off automatically (up to 2 minutes) and reset on success |
-| Up / down colours | Red up / green down (China) or green up / red down (international) — numbers and chart switch together |
-| Visible columns | Open / high / low / turnover can be hidden; name, price, change, percentage and chart stay |
-| Move alert threshold | Show a banner when a symbol's daily move exceeds this percentage; 0 disables it |
-| Import / export watchlist | JSON in a text box (`{"version":1,"symbols":[...]}` or a plain array of strings), so a list can move between machines |
-
-Preferences live in `localStorage` under `dsh-stock-quotes/prefs`.
-
-**Sorting**: click the name / price / change / percentage / turnover headers to sort (descending → ascending → unsorted). A sorted table is a read-only view, so drag-reorder asks you to clear the sort first.
-
-**Keyboard**: `Tab` to a row, `Enter` or `Space` opens the focus chart, `Esc` closes it.
-
-## Symbol spellings
-
-| Market | Spellings | Examples |
-|---|---|---|
-| Shanghai | 6 digits, `sh` prefix, `.SH`/`.SS` suffix | `600519`, `sh600519`, `600519.SH`, `688981`, `900901` |
-| Shenzhen | 6 digits, `sz` prefix, `.SZ` suffix | `000001`, `sz000001`, `000001.SZ`, `300750` |
-| Beijing | 6 digits, `bj` prefix, `.BJ` suffix | `430047`, `830799`, `920001` |
-| Hong Kong | 1–5 digits, `hk` prefix, `.HK` suffix | `00700`, `700`, `hk00700`, `00700.HK` |
-| US | letters, `us` prefix, `.US`/`.O`/`.N` suffix | `AAPL`, `usAAPL`, `AAPL.US`, `BRK.B` (matched across NASDAQ / NYSE / AMEX) |
-| Raw secid | `market.code` | `1.600519`, `116.00700` |
-
-**Ambiguous bare six-digit codes**: both markets are tried and the first that answers wins. So `000300` (沪深300, Shanghai only) falls through to `1.000300`, while `000001` exists on both and defaults to Shenzhen (平安银行) — write `sh000001` or `000001.SH` for the Shanghai index. An explicit prefix or suffix is authoritative and never falls back, so a wrong market reports "not found" rather than silently picking another listing.
-
-## Symbols and search
-
-Use Longbridge symbols such as `600519.SH`, `300750.SZ`, `700.HK` and `AAPL.US`. Existing entries such as `sh600519`, `hk00700` and `116.00700` still resolve. Search combines Longbridge’s US, HK, Shanghai and Shenzhen lists (including STAR Market) with the bundled index. For Nasdaq Composite, search `.IXIC.US`. Beijing Exchange names and codes are searchable, but tested Beijing symbols returned no Longbridge quotes. Other symbols can be entered by code, subject to coverage and account permissions. Eastmoney's proprietary `BKxxxx` boards have no direct mapping.
-
-## Configuration
-
-`cordis.patch.yml` ships a watchlist that `stock_quote` falls back to when the model calls it without arguments:
-
-```yaml
-- insert:
-    - id: stock-quotes-plus
-      name: 'dsh-stock-quotes-plus'
-      config:
-        defaultSymbols:
-          - sh000001
-          - sh600519
-          - sz300750
-          - hk00700
-          - usAAPL
-```
-
-The panel keeps its own watchlist in the browser, independently of this list: the config is for the agent, the panel is for looking.
-
-## How it works
-
-| File | Role |
-|---|---|
-| `package.json` | Bundle manifest: `dsh.bundle.patch` inserts the Host row, `dsh.client` makes the Web app load the browser half |
-| `cordis.patch.yml` | Loader patch: inserts the `stock-quotes` row with the default watchlist |
-| `index.js` | Host half: registers `stock_quote` as a raw `ToolDefinition` and mounts the same-origin quote routes |
-| `quotes.js` | Pure data layer: symbol resolution, batched fetch, formatting |
-| `client.js` | Browser half: `main` panel, `plugins.bundle.config` settings card, `sidebar.panellist` icon |
-| `locale/{zh,en}.json` | Plugin-manager card title and description |
-
-Two design notes worth knowing if you modify it:
-
-- **No bare `@deepseek-ai/...` imports in the Host half.** A bundle linked into a profile from outside it does not resolve those specifiers, so the row would fail to import. It registers a raw `ToolDefinition` instead.
-- **The client half does not import any Harness client package.** It writes its own controls with theme tokens (`--dsw-alias-*`) only, which keeps it stable across Harness versions.
-
-## Tests
-
-```bash
-npm test
-```
-
-- `tests/quotes.test.mjs` — symbol resolution, batching, formatting and cancellation. The deterministic part needs no network, and the live section is skipped when the endpoint is unreachable.
-- `tests/render.test.mjs` — the tool definition and the text it renders: two decimals, signed changes, an em dash for missing fields, and no throw on degenerate input.
-- `tests/client.test.mjs` — emulates the module loader, the locale service, the slot registry and React, then asserts what the plugin registers, what its components render, and the reorder/move list transforms.
-
-The Host half's full contract check needs packages from a DeepSeek Harness installation, so it is kept out of this repo.
-
-- `tests/meta.test.mjs` — release consistency: checks the version, changelog, packaged files and official Longbridge SDK dependency.
-
-Releases are cut by pushing a `v*` tag, which publishes with provenance — see [RELEASING.md](RELEASING.md).
-
-## Stability, data source and disclaimer
-
-- Market data coverage and delay depend on your Longbridge OpenAPI permissions.
-- The search index is a snapshot generated in this repository (`data/securities.json`) and fetched from a CDN **pinned to the released version** (the npm package and the git tag carry the same version). Re-run `node scripts/build-index.mjs` and release when new listings appear.
-- Data **may be delayed or wrong**. This plugin is for looking at prices only: it is **not investment advice** and **must not be used for trading decisions**. Any loss from using it is the user's own.
-- The plugin collects and reports nothing; the watchlist and settings stay in the browser's `localStorage`.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+MIT · [LICENSE](LICENSE) · [Ticker component license](LICENSE-ticker)

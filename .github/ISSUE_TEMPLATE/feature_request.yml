@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for the suggestion. 感谢提出建议。
 
-        Quote data itself comes from Eastmoney's public endpoints, so requests
+        Quote data comes from Longbridge OpenAPI, so requests
         for new markets or fields can only be honoured where that source
         provides them. 行情数据来自东方财富公开接口，新增市场/字段受数据源限制。
   - type: textarea

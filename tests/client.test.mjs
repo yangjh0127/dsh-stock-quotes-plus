@@ -328,8 +328,8 @@ mod.apply(ctx);
 
 const t = ctx.locale.bind();
 const byName = (name) => registered.filter((entry) => entry.options.name === name);
-const setPrefs = (value) => store.set('dsh-stock-quotes/prefs', JSON.stringify(value));
-const setWatchlist = (value) => store.set('dsh-stock-quotes/watchlist', JSON.stringify(value));
+const setPrefs = (value) => store.set('dsh-stock-quotes-plus/prefs', JSON.stringify(value));
+const setWatchlist = (value) => store.set('dsh-stock-quotes-plus/watchlist', JSON.stringify(value));
 
 // --- locale dictionaries ---------------------------------------------------
 check('locale namespace', namespace, 'stock-quotes');
@@ -361,10 +361,10 @@ check('ticker switch persists and mounts ticker', tickerOverlay()?.type?.name, '
 check('ticker has no independent settings button', renderText(tickerOverlay()).includes('行情设置'), false);
 setWatchlist([]);
 check('ticker respects an empty panel watchlist', renderText(tickerOverlay()).includes('自选股为空'), true);
-store.delete('dsh-stock-quotes/watchlist');
+store.delete('dsh-stock-quotes-plus/watchlist');
 toggle().props.onChange({ target: { checked: false } });
 check('ticker switch persists and unmounts ticker', tickerOverlay(), null);
-store.delete('dsh-stock-quotes/prefs');
+store.delete('dsh-stock-quotes-plus/prefs');
 
 // --- name resolution -------------------------------------------------------
 check('default label resolves neutrally', icon.options.label(), '\u6570\u636e');
@@ -374,9 +374,9 @@ setPrefs({ label: 'x'.repeat(80) });
 check('label capped at 24', icon.options.label().length, 24);
 setPrefs({ label: '' });
 check('empty falls back to default', icon.options.label(), '\u6570\u636e');
-store.set('dsh-stock-quotes/prefs', 'not json');
+store.set('dsh-stock-quotes-plus/prefs', 'not json');
 check('corrupt prefs fall back', icon.options.label(), '\u6570\u636e');
-store.delete('dsh-stock-quotes/prefs');
+store.delete('dsh-stock-quotes-plus/prefs');
 
 // --- the bundle-page card --------------------------------------------------
 const cardTree = byName('plugins.bundle.config')[0].component({ t });
@@ -392,7 +392,7 @@ const cardTree2 = byName('plugins.bundle.config')[0].component({ t });
 check('saved name is prefilled', inputsOf(cardTree2)[0].props.value, 'Records');
 const summaryTree = byName('plugins.bundle.config')[0].component({ t, view: 'summary' });
 check('summary view is one line', inputsOf(summaryTree).length, 0);
-store.delete('dsh-stock-quotes/prefs');
+store.delete('dsh-stock-quotes-plus/prefs');
 
 // --- the quotes panel: rows, selection, drag handles -----------------------
 setWatchlist(['AAPL', '600519', '00700']);
@@ -439,7 +439,7 @@ check('charts are off when the preference says so', chartCells(plainTree).length
 check('the grid drops the chart column',
   String(plainRows[0].props.style.gridTemplateColumns).includes('minmax(88px'), false);
 check('rows stay aligned without the column', plainRows[0].children.length, rows[0].children.length - 1);
-store.delete('dsh-stock-quotes/prefs');
+store.delete('dsh-stock-quotes-plus/prefs');
 
 // --- source hygiene --------------------------------------------------------
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');

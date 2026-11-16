@@ -1,17 +1,4 @@
-/**
- * Opt-in ESLint configuration — NOT run by CI.
- *
- * The plugin ships with zero runtime dependencies and the workflow installs no
- * devDependencies, so a lint job would fail simply because `eslint` is absent.
- * Everything below is optional tooling for contributors. To use it:
- *
- *     npm i -D eslint @eslint/js
- *     npx eslint .
- *
- * It enables only the `@eslint/js` recommended rules (no custom or stylistic
- * rules), gives Node globals to the server-side files and browser globals to
- * the single-file client half, and ignores the generated `data/` directory.
- */
+/** ESLint rules for the DSH host and browser entry points. */
 import js from '@eslint/js';
 
 /** Minimal Node global names, spelled out so this file needs no `globals` package. */

@@ -1,7 +1,7 @@
 # Release automation for dsh-stock-quotes-plus.
 #
 # A pushed `v*` tag is the only trigger: this workflow checks that the tag, the
-# package manifest and the pinned search-index version agree, then publishes to
+# package manifest and the changelog version agree, then publishes to
 # npm and opens the matching GitHub release. Nothing here runs on a branch push,
 # so a stray commit to `main` cannot ship.
 #
@@ -68,9 +68,7 @@ jobs:
       - name: Run the test suite
         run: npm test
 
-      # A release is exactly one version in four places: the tag, package.json,
-      # CHANGELOG.md and the pinned search-index version. This refuses a tag that
-      # disagrees before anything reaches the registry.
+      # Check the tag, package manifest and changelog before publishing.
       - name: Refuse a release that disagrees with itself
         run: npm run check:release
 

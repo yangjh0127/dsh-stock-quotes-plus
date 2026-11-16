@@ -1,8 +1,5 @@
 # Dependency updates for dsh-stock-quotes.
 #
-# The plugin has zero runtime dependencies on purpose, so only the lint tooling
-# and the workflow actions can move. Both are grouped into one pull request per
-# ecosystem: reviewing a single bump bundle is cheaper than four one-line PRs.
 version: 2
 updates:
   - package-ecosystem: npm

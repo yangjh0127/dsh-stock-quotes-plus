@@ -11,7 +11,7 @@ body:
         Please fill in the version fields — most quote problems turn out to be a
         mismatch between the plugin build and the DeepSeek Harness build.
         **Do not report security issues here** — see
-        [SECURITY.md](https://github.com/AhaCrazy/dsh-stock-quotes/blob/main/SECURITY.md).
+        [SECURITY.md](https://github.com/yangjh0127/dsh-stock-quotes-plus/blob/main/SECURITY.md).
   - type: input
     id: plugin-version
     attributes:

@@ -1,5 +1,5 @@
 /**
- * dsh-stock-quotes — Client half (Web UI).
+ * dsh-stock-quotes-plus — Client half (Web UI).
  *
  * Two registrations, both root-scoped:
  *   - the行情 page in the layout's `main` keyed slot under the key `stock-quotes`;
@@ -17,7 +17,8 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'stock-quotes';
     /** Must equal package.json `name`: it keys the bundle's own settings card. */
     const PKG = 'dsh-stock-quotes-plus';
-    const STORAGE_KEY = 'dsh-stock-quotes/watchlist';
+    const STORAGE_KEY = PKG + '/watchlist';
+    const previousStorageNamespace = PKG.replace(/-plus$/, '');
     const CHART_TTL = 60000;
     /** At most this many intraday requests in flight at once. */
     const TREND_CONCURRENCY = 4;
@@ -262,7 +263,7 @@ window.__ModuleLoader__.load({
       return marketSymbol(value, /^\d+$/.test(value) ? 'HK' : 'US');
     }
 
-    const INDEX_KEY = 'dsh-stock-quotes/longbridge-index-v3';
+    const INDEX_KEY = PKG + '/longbridge-index-v3';
     const INDEX_TTL = 24 * 60 * 60 * 1000;
     let indexPromise = null;
 
@@ -778,7 +779,8 @@ window.__ModuleLoader__.load({
     function readWatchlist() {
       if (unsavedWatchlist !== undefined) return unsavedWatchlist;
       try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const raw = window.localStorage.getItem(STORAGE_KEY)
+          ?? window.localStorage.getItem(previousStorageNamespace + '/watchlist');
         if (raw !== null) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
@@ -827,7 +829,7 @@ window.__ModuleLoader__.load({
      * plumbing. Only the sidebar/page name is user-configurable; the default is
      * deliberately neutral so the entry does not advertise what it shows.
      */
-    const PREFS_KEY = 'dsh-stock-quotes/prefs';
+    const PREFS_KEY = PKG + '/prefs';
     const NAME_LIMIT = 24;
     const REFRESH_CHOICES = [5, 10, 15, 30, 60];
     const COLUMN_KEYS = ['open', 'high', 'low', 'amount'];
@@ -877,7 +879,8 @@ window.__ModuleLoader__.load({
     /** Read the saved preferences; anything unreadable falls back to defaults. */
     function readPrefs() {
       try {
-        const raw = window.localStorage.getItem(PREFS_KEY);
+        const raw = window.localStorage.getItem(PREFS_KEY)
+          ?? window.localStorage.getItem(previousStorageNamespace + '/prefs');
         if (raw !== null) return normalisePrefs(JSON.parse(raw));
       } catch {
         /* A blocked or corrupt store falls back to the defaults. */
@@ -918,7 +921,7 @@ window.__ModuleLoader__.load({
 
 
     // The Harness loader serves one browser entry for this bundle.
-    // Ticker UI adapted from kfat77/dsh-stock-ticker (see LICENSE-ticker).
+    // The ticker component’s copyright notice is in LICENSE-ticker.
     function createTickerOverlay() {
       const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
@@ -930,14 +933,14 @@ window.__ModuleLoader__.load({
       const MIN_LOOP_SECONDS = 20;
       const MAX_LOOP_SECONDS = 180;
 
-      const STYLE_ID = 'dsh-stock-ticker-style';
+      const STYLE_ID = 'dsh-stock-quotes-plus-ticker-style';
 
       const CSS = `
-:root { --dsh-stock-ticker-height: ${STRIP_HEIGHT}px; }
+:root { --dsh-stock-quotes-plus-ticker-height: ${STRIP_HEIGHT}px; }
 .dst-root {
   position: absolute;
   inset: 0 0 auto 0;
-  height: var(--dsh-stock-ticker-height);
+  height: var(--dsh-stock-quotes-plus-ticker-height);
   display: flex;
   align-items: stretch;
   box-sizing: border-box;
@@ -1192,7 +1195,7 @@ window.__ModuleLoader__.load({
           while (layer !== null && !layer.hasAttribute('data-shell-overlay')) layer = layer.parentElement;
           const frame = layer?.parentElement;
           if (frame === undefined || frame === null) return undefined;
-          frame.setAttribute('data-dsh-stock-ticker-frame', '');
+          frame.setAttribute('data-dsh-stock-quotes-plus-ticker-frame', '');
           const originalPadding = frame.style.paddingTop;
           const measure = () => {
             frame.style.paddingTop = originalPadding;
@@ -1204,7 +1207,7 @@ window.__ModuleLoader__.load({
           window.addEventListener('resize', measure);
           return () => {
             window.removeEventListener('resize', measure);
-            frame.removeAttribute('data-dsh-stock-ticker-frame');
+            frame.removeAttribute('data-dsh-stock-quotes-plus-ticker-frame');
             frame.style.paddingTop = originalPadding;
             root.style.top = '';
           };
@@ -1789,7 +1792,7 @@ window.__ModuleLoader__.load({
           } catch (error) {
             // A failed chart refresh must never take the panel down, and must never
             // fail silently: the next tick retries, and the console keeps the reason.
-            console.error('[dsh-stock-quotes] intraday refresh failed', error);
+            console.error('[dsh-stock-quotes-plus] intraday refresh failed', error);
           }
         };
         void load();

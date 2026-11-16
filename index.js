@@ -1,5 +1,5 @@
 /**
- * dsh-stock-quotes — Host half.
+ * dsh-stock-quotes-plus — Host half.
  *
  * Registers one model-facing tool, `stock_quote`, which answers "what is the price
  * of X right now" for a single stock or a whole watchlist in one request. The
@@ -13,7 +13,7 @@
  * `output.schema`/`output.render` — which is the exact shape the tool registry
  * consumes, with argument handling validated here instead of by a schema helper.
  *
- * @module dsh-stock-quotes
+ * @module dsh-stock-quotes-plus
  */
 import { SYMBOL_HELP, createMarketData, formatAmount } from './quotes.js';
 import { AuthorizationRequired, createLongbridgeAuth } from './oauth.js';
