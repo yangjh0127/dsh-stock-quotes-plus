@@ -35,7 +35,7 @@ When switching from the upstream panel, uninstall it first to avoid duplicate si
 
 ## Top stock ticker
 
-In DSH Web, open **Plugins → Data panel → Panel settings** and select **Show top stock ticker**. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
+In DSH Web, open **Data** in the sidebar and select **Show top stock ticker** in its toolbar. The same option is available in the bundle settings. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
 
 Use the ticker's gear button to configure its own watchlist, refresh interval, and price-move alerts. Click a quote to view details. The host fetches ticker data from Tencent and saves ticker settings to the current profile.
 

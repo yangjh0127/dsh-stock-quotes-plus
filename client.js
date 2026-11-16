@@ -1846,6 +1846,7 @@ window.__ModuleLoader__.load({
       const [dropAt, setDropAt] = React.useState(null);
       const [notice, setNotice] = React.useState('');
       const [matches, setMatches] = React.useState([]);
+      const [tickerEnabled, setTickerEnabled] = React.useState(() => readPrefs().tickerEnabled);
       const [chart, setChart] = React.useState(() => readPrefs().chart);
       const [trends, setTrends] = React.useState({});
       const [refreshMs, setRefreshMs] = React.useState(() => readPrefs().refreshSeconds * 1000);
@@ -1907,6 +1908,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => onPrefsChange(() => {
         const next = readPrefs();
         setChart(next.chart);
+        setTickerEnabled(next.tickerEnabled);
         setRefreshMs(next.refreshSeconds * 1000);
         setConvention(next.convention);
         setColumns(next.columns);
@@ -2698,7 +2700,15 @@ window.__ModuleLoader__.load({
                     setChart(next);
                     writePrefs({ chart: next });
                   },
-                }, t('panel.chart'))),
+                }, t('panel.chart')),
+                h('button', {
+                  type: 'button',
+                  className: 'dsq-btn',
+                  role: 'switch',
+                  'aria-checked': tickerEnabled,
+                  'aria-label': t('settings.ticker'),
+                  onClick: () => writePrefs({ tickerEnabled: !tickerEnabled }),
+                }, t('settings.ticker'))),
               selected.size === 0
                 ? null
                 : h('div', { className: 'dsq-selbar' },
