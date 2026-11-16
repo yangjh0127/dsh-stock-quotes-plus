@@ -55,7 +55,10 @@ const data = createMarketData(async () => ({
     assert.equal(sessions, 0);
     assert.equal(symbol, 'AAPL.US');
     trendCalls++;
-    return [{ price: '200.50', timestamp: new Date('2026-11-16T21:00:00Z'), volume: 18, avgPrice: '201' }];
+    return [
+      { price: '0', timestamp: new Date('2026-11-16T20:59:00Z'), volume: 0, avgPrice: '0' },
+      { price: '200.50', timestamp: new Date('2026-11-16T21:00:00Z'), volume: 18, avgPrice: '201' },
+    ];
   },
   async securityList(market) {
     return {

@@ -94,10 +94,11 @@ function trendDay(timestamp, symbol) {
 
 function trendPoint(row, symbol) {
   const v = toNumber(row.price ?? row.close);
-  if (v === undefined) return null;
+  if (!(v > 0)) return null;
+  const average = toNumber(row.avgPrice);
   return {
     day: trendDay(row.timestamp, symbol), t: beijingTime.format(row.timestamp), v,
-    vol: toNumber(row.volume), avg: toNumber(row.avgPrice),
+    vol: toNumber(row.volume), avg: average > 0 ? average : undefined,
   };
 }
 

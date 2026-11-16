@@ -450,13 +450,17 @@ window.__ModuleLoader__.load({
       return undefined;
     }
 
-    /** Min/max of the finite values in a series. */
+    function isChartPrice(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value > 0;
+    }
+
+    /** Min/max of the valid prices in a series. */
     function seriesBounds(series) {
       let min = Infinity;
       let max = -Infinity;
       for (const item of Array.isArray(series) ? series : []) {
         if (item === null || typeof item !== 'object') continue;
-        if (typeof item.v !== 'number' || !Number.isFinite(item.v)) continue;
+        if (!isChartPrice(item.v)) continue;
         if (item.v < min) min = item.v;
         if (item.v > max) max = item.v;
       }
@@ -503,7 +507,7 @@ window.__ModuleLoader__.load({
       const points = [];
       for (const item of Array.isArray(series) ? series : []) {
         if (item === null || typeof item !== 'object') continue;
-        if (typeof item.v !== 'number' || !Number.isFinite(item.v)) continue;
+        if (!isChartPrice(item.v)) continue;
         points.push(item);
       }
       const bounds = seriesBounds(points);
@@ -573,10 +577,11 @@ window.__ModuleLoader__.load({
       if (!(max > min) || !(height > 0)) return [];
       const step = niceStep(max - min, count);
       const ticks = [];
+      const decimals = Math.max(2, Math.min(10, 1 + Math.ceil(-Math.log10(step))));
       const first = Math.ceil(min / step) * step;
       for (let value = first; value <= max + step * 1e-9; value += step) {
         const y = height - ((value - min) / (max - min)) * height;
-        ticks.push({ value, y });
+        ticks.push({ value, y, label: value.toFixed(decimals) });
       }
       return ticks;
     }
@@ -661,7 +666,7 @@ window.__ModuleLoader__.load({
       const list = [];
       for (const point of Array.isArray(points) ? points : []) {
         if (point === null || typeof point !== 'object') continue;
-        if (typeof point.v !== 'number' || !Number.isFinite(point.v)) continue;
+        if (!isChartPrice(point.v)) continue;
         list.push(point);
       }
       if (list.length < 2) return null;
@@ -678,24 +683,12 @@ window.__ModuleLoader__.load({
         return (index / (list.length - 1)) * FOCUS_PLOT.width;
       });
 
-      let min = Infinity;
-      let max = -Infinity;
-      for (const point of list) {
-        if (point.v < min) min = point.v;
-        if (point.v > max) max = point.v;
-        if (typeof point.avg === 'number' && Number.isFinite(point.avg)) {
-          if (point.avg < min) min = point.avg;
-          if (point.avg > max) max = point.avg;
-        }
-      }
-      if (typeof preClose === 'number' && Number.isFinite(preClose)) {
-        min = Math.min(min, preClose);
-        max = Math.max(max, preClose);
-      }
-      const span = max - min;
-      const pad = span === 0 ? Math.max(Math.abs(max) * 0.01, 0.01) : span * 0.08;
-      min -= pad;
-      max += pad;
+      const bounds = seriesBounds(list);
+      const span = bounds.max - bounds.min;
+      const pad = (span || bounds.max) * (span === 0 ? 0.01 : 0.08);
+      const min = bounds.min - pad > 0 ? bounds.min - pad : bounds.min / 2;
+      const max = bounds.max + pad;
+      const inRange = (value) => isChartPrice(value) && value >= min && value <= max;
 
       const yOf = (value) => FOCUS_PLOT.height - ((value - min) / (max - min)) * FOCUS_PLOT.height;
       let d = '';
@@ -709,11 +702,13 @@ window.__ModuleLoader__.load({
         let started = false;
         for (let index = 0; index < list.length; index += 1) {
           const value = list[index].avg;
-          if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+          if (!inRange(value)) {
+            started = false;
+            continue;
+          }
           avg += `${started ? 'L' : 'M'}${xs[index].toFixed(2)} ${yOf(value).toFixed(2)}`;
           started = true;
         }
-        if (!started) avg = '';
       }
 
       let high = list[0];
@@ -734,7 +729,7 @@ window.__ModuleLoader__.load({
         high,
         low,
         yOf,
-        preCloseY: typeof preClose === 'number' && Number.isFinite(preClose) ? yOf(preClose) : undefined,
+        preCloseY: inRange(preClose) ? yOf(preClose) : undefined,
         yTicks: yAxisTicks(min, max, FOCUS_PLOT.height),
         xTicks: xAxisTicks(list, kind, mode, FOCUS_PLOT.width),
       };
@@ -2050,7 +2045,7 @@ window.__ModuleLoader__.load({
             h('g', { transform: `translate(${FOCUS_BOX.left} ${FOCUS_BOX.top})` },
               geometry.yTicks.map((tick) => h('g', { key: `gy${tick.value}` },
                 h('line', { x1: 0, x2: FOCUS_PLOT.width, y1: tick.y, y2: tick.y, stroke: grid, strokeWidth: '1' }),
-                h('text', { x: FOCUS_PLOT.width + 8, y: tick.y + 4, ...axis }, fmt(tick.value)))),
+                h('text', { x: FOCUS_PLOT.width + 8, y: tick.y + 4, ...axis }, tick.label))),
               geometry.xTicks.map((tick, index) => h('g', { key: `gx${index}` },
                 h('line', { x1: tick.x, x2: tick.x, y1: 0, y2: FOCUS_PLOT.height, stroke: grid, strokeWidth: '1' }),
                 h('text', { x: tick.x, y: FOCUS_PLOT.height + 16, textAnchor: 'middle', ...axis }, tick.label))),

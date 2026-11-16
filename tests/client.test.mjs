@@ -223,6 +223,20 @@ check('geometry builds a path', geo.d.startsWith('M'), true);
 check('geometry builds a closed area', geo.area.endsWith('Z'), true);
 check('high and low are identified', [geo.high.v, geo.low.v], [120, 100]);
 check('the previous close is inside the plotted range', geo.min < 105 && geo.max > 105, true);
+const NARROW_DAY = [
+  { t: '09:30', v: 0, avg: 0 },
+  { t: '09:31', v: 12.001, avg: 0 },
+  { t: '09:32', v: 12.004, avg: 1 },
+  { t: '09:33', v: 12.003, avg: 12.003 },
+];
+const narrow = focusGeometry(NARROW_DAY, { kind: 'cn', preClose: 0 });
+check('zero prices are excluded from the plotted series', narrow.points.length, 3);
+check('price axis pads the valid range', narrow.min > 12 && narrow.min < 12.001 && narrow.max > 12.004 && narrow.max < 12.005, true);
+check('zero prev close is not drawn', narrow.preCloseY, undefined);
+check('a distant previous close does not widen the scale', focusGeometry(NARROW_DAY, { preClose: 25 }).max, narrow.max);
+check('axis tick labels distinguish sub-cent changes', new Set(narrow.yTicks.map((tick) => tick.label)).size, narrow.yTicks.length);
+check('sparkline ignores zero prices', sparklinePath(NARROW_DAY), sparklinePath(NARROW_DAY.slice(1)));
+
 check('the average line is drawn for one day', geo.avg.startsWith('M'), true);
 check('five-day mode drops the average line', focusGeometry(CN_DAY, { kind: 'cn', mode: 5 }).avg, '');
 check('an unknown session still builds from the data', focusGeometry(CN_DAY, {}).d.startsWith('M'), true);
