@@ -34,7 +34,6 @@ const nodeGlobals = {
   setInterval: 'readonly',
   setTimeout: 'readonly',
   structuredClone: 'readonly',
-  TextDecoder: 'readonly',
 };
 
 /** Browser globals used by `client.js`, which never runs in Node. */

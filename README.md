@@ -37,7 +37,7 @@ plugin_manager  action: install_bundle  target: <绝对路径>/dsh-stock-quotes-
 
 在 DSH Web 的侧边栏打开「数据」，点击工具栏里的「显示顶部行情条」。也可以在插件的「面板设置」里勾选同一个选项。默认关闭，切换即时生效，刷新页面后保留。关闭时停止行情条的自动刷新并释放顶部空间。
 
-行情条右侧的齿轮可独立设置自选股、刷新间隔和涨跌提醒阈值。点击代码可查看详情。行情条数据由宿主请求腾讯行情，设置保存到当前 profile。
+顶部行情条与侧栏面板使用同一份东方财富行情，并跟随侧栏的自选股顺序、刷新间隔、涨跌配色和异动提醒阈值。添加、删除或拖动自选股后，顶部会同步更新。点击代码可查看详情。
 
 本项目基于 [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes)，顶部行情条改编自 [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker)。两份 MIT 许可证分别见 [LICENSE](LICENSE) 和 [LICENSE-ticker](LICENSE-ticker)。
 

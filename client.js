@@ -928,8 +928,32 @@ window.__ModuleLoader__.load({
       return { quotes, unresolved };
     }
 
+    const watchlistListeners = new Set();
+    const quoteListeners = new Set();
+    const pendingQuotes = new Map();
+    let latestQuotes = null;
+
+    /** Share a batch and its result between the panel and the top strip. */
+    function refreshQuotes(symbols) {
+      const key = JSON.stringify(symbols);
+      const pending = pendingQuotes.get(key);
+      if (pending !== undefined) return pending;
+
+      const request = fetchQuotes(symbols, { signal: AbortSignal.timeout(12000) }).then((result) => {
+        if (key === JSON.stringify(readWatchlist())) {
+          latestQuotes = { key, quotes: result.quotes, at: Date.now() };
+          for (const listener of quoteListeners) listener(latestQuotes);
+        }
+        return result;
+      }).finally(() => pendingQuotes.delete(key));
+      pendingQuotes.set(key, request);
+      return request;
+    }
+
+    let unsavedWatchlist;
     /** Read the saved watchlist; a saved empty list stays empty. */
     function readWatchlist() {
+      if (unsavedWatchlist !== undefined) return unsavedWatchlist;
       try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
         if (raw !== null) {
@@ -947,11 +971,32 @@ window.__ModuleLoader__.load({
     }
 
     function writeWatchlist(list) {
+      const clean = list.filter((entry) => typeof entry === 'string' && entry.trim() !== '').map((entry) => entry.trim());
+      if (JSON.stringify(readWatchlist()) === JSON.stringify(clean)) return;
       try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+        unsavedWatchlist = undefined;
       } catch {
-        /* Persisting is a convenience; the page still works without it. */
+        unsavedWatchlist = clean;
       }
+      for (const listener of watchlistListeners) listener(clean);
+    }
+
+    function useWatchlist() {
+      const [symbols, setSymbols] = React.useState(readWatchlist);
+      React.useEffect(() => {
+        const onStorage = (event) => {
+          if (event.key === STORAGE_KEY || event.key === null) setSymbols(readWatchlist());
+        };
+        watchlistListeners.add(setSymbols);
+        window.addEventListener('storage', onStorage);
+        setSymbols(readWatchlist());
+        return () => {
+          watchlistListeners.delete(setSymbols);
+          window.removeEventListener('storage', onStorage);
+        };
+      }, []);
+      return symbols;
     }
 
     /**
@@ -1062,8 +1107,6 @@ window.__ModuleLoader__.load({
       const MIN_LOOP_SECONDS = 20;
       const MAX_LOOP_SECONDS = 180;
 
-      const API_BASE = '/api/dsh-stock-quotes-plus/ticker';
-
       const STYLE_ID = 'dsh-stock-ticker-style';
 
       const CSS = `
@@ -1106,35 +1149,20 @@ window.__ModuleLoader__.load({
 .dst-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .dst-detail-label { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dst-detail-value { font-variant-numeric: tabular-nums; }
-.dst-detail-time { margin-top: 12px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dst-symbol { font-weight: 650; letter-spacing: 0.02em; color: var(--dsw-alias-label-primary); }
 .dst-price { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary); }
 .dst-change { font-variant-numeric: tabular-nums; font-weight: 650; }
 .dst-arrow { font-size: 9px; margin-right: 1px; }
 .dst-up { color: var(--dsw-alias-state-success-primary); }
 .dst-down { color: var(--dsw-alias-state-error-primary); }
+.dst-root[data-convention="cn"] .dst-up { color: var(--dsw-alias-state-error-primary); }
+.dst-root[data-convention="cn"] .dst-down { color: var(--dsw-alias-state-success-primary); }
 .dst-flat { color: var(--dsw-alias-label-secondary); }
 .dst-message { padding: 0 16px; color: var(--dsw-alias-label-secondary); display: flex; align-items: center; gap: 8px; }
 .dst-retry { background: var(--dsw-alias-bg-layer-2); border: 0; border-radius: 4px; color: var(--dsw-alias-label-primary); font: inherit; padding: 3px 8px; cursor: pointer; }
 .dst-retry:hover { background: var(--dsw-alias-bg-layer-2); }
-.dst-actions { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-left: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); }
 .dst-icon-button { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; padding: 0; }
 .dst-icon-button:hover, .dst-icon-button[aria-expanded="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
-.dst-notice { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 6px; color: var(--dsw-alias-state-warn-primary); font-size: 11px; }
-.dst-panel { position: absolute; top: calc(100% + 6px); right: 8px; width: 320px; box-sizing: border-box; padding: 14px; border-radius: 10px; background: var(--dsw-alias-bg-overlay); border: 1px solid var(--dsw-alias-border-l2); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); color: var(--dsw-alias-label-primary); z-index: 30; font-size: 12px; }
-.dst-panel-title { font-size: 13px; font-weight: 650; margin-bottom: 10px; }
-.dst-label { display: block; margin: 10px 0 4px; color: var(--dsw-alias-label-secondary); }
-.dst-textarea, .dst-input { width: 100%; box-sizing: border-box; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; color: var(--dsw-alias-label-primary); font: inherit; padding: 6px 8px; outline: none; }
-.dst-textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.dst-textarea:focus, .dst-input:focus { border-color: var(--dsw-alias-brand-primary); }
-.dst-hint { margin-top: 6px; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 1.5; }
-.dst-error { margin-top: 8px; color: var(--dsw-alias-state-error-primary); font-size: 11px; line-height: 1.5; }
-.dst-panel-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.dst-button { border: 1px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-primary); border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer; }
-.dst-button:hover { background: var(--dsw-alias-bg-layer-2); }
-.dst-button-primary { background: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-bg-base); font-weight: 600; }
-.dst-button-primary:hover { background: var(--dsw-alias-brand-primary); }
-.dst-button:disabled { opacity: 0.55; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .dst-track { animation: none; }
   .dst-viewport { overflow-x: auto; }
@@ -1188,9 +1216,9 @@ window.__ModuleLoader__.load({
        * @returns rendered entry.
        */
       function TickerItem({ quote, flashPercent, onSelect }) {
-        const tone = toneClass(quote.changePercent);
-        const arrow = quote.changePercent > 0 ? '▲' : quote.changePercent < 0 ? '▼' : '■';
-        const changePercent = quote.changePercent;
+        const tone = toneClass(quote.changePct);
+        const arrow = quote.changePct > 0 ? '▲' : quote.changePct < 0 ? '▼' : '■';
+        const changePercent = quote.changePct;
         const alerting =
           flashPercent > 0 &&
           typeof changePercent === 'number' &&
@@ -1202,7 +1230,7 @@ window.__ModuleLoader__.load({
             className: alerting ? 'dst-item dst-item-alert' : 'dst-item',
             role: 'button',
             tabIndex: 0,
-            title: `${quote.symbol} ${quote.name || ''} ${quote.time || ''}`.trim(),
+            title: `${quote.symbol} ${quote.name || ''}`.trim(),
             'aria-label': `${quote.symbol} ${quote.name || ''}`.trim(),
             onClick: () => onSelect(quote),
             onKeyDown: (event) => {
@@ -1219,7 +1247,7 @@ window.__ModuleLoader__.load({
             { className: `dst-change ${tone}` },
             h('span', { className: 'dst-arrow', 'aria-hidden': 'true' }, arrow),
             formatSigned(quote.change),
-            ` (${formatSigned(quote.changePercent)}%)`,
+            ` (${formatSigned(quote.changePct)}%)`,
           ),
         );
       }
@@ -1234,7 +1262,7 @@ window.__ModuleLoader__.load({
           ['今开', formatNumber(quote.open)],
           ['最高', formatNumber(quote.high)],
           ['最低', formatNumber(quote.low)],
-          ['昨收', formatNumber(quote.previousClose)],
+          ['昨收', formatNumber(quote.preClose)],
         ];
         return h(
           'div',
@@ -1246,7 +1274,7 @@ window.__ModuleLoader__.load({
               'div',
               null,
               h('div', { className: 'dst-detail-name' }, quote.name || quote.symbol),
-              h('div', { className: 'dst-detail-symbol' }, `${quote.symbol}${quote.currency ? ` · ${quote.currency}` : ''}`),
+              h('div', { className: 'dst-detail-symbol' }, `${quote.symbol}${quote.market ? ` · ${quote.market}` : ''}`),
             ),
             h(
               'button',
@@ -1260,8 +1288,8 @@ window.__ModuleLoader__.load({
             formatNumber(quote.price),
             h(
               'span',
-              { className: `dst-change ${toneClass(quote.changePercent)}` },
-              `${formatSigned(quote.change)} (${formatSigned(quote.changePercent)}%)`,
+              { className: `dst-change ${toneClass(quote.changePct)}` },
+              `${formatSigned(quote.change)} (${formatSigned(quote.changePct)}%)`,
             ),
           ),
           h(
@@ -1276,7 +1304,6 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          quote.time ? h('div', { className: 'dst-detail-time' }, `行情时间 ${quote.time}`) : null,
         );
       }
 
@@ -1319,147 +1346,57 @@ window.__ModuleLoader__.load({
       }
 
 
-      /**
-       * Settings popover: edit the watchlist and the refresh interval.
-       * @param props current settings, pending state, and callbacks.
-       * @returns rendered popover.
-       */
-      function SettingsPanel({ data, saving, error, onSave, onClose }) {
-        const [symbols, setSymbols] = useState((data?.symbols ?? []).join(', '));
-        const [refresh, setRefresh] = useState(String(data?.refreshSeconds ?? 15));
-        const [flash, setFlash] = useState(String(data?.flashPercent ?? 3));
-
-        useEffect(() => {
-          const onKeyDown = (event) => {
-            if (event.key === 'Escape') onClose();
-          };
-          document.addEventListener('keydown', onKeyDown);
-          return () => document.removeEventListener('keydown', onKeyDown);
-        }, [onClose]);
-
-        return h(
-          'div',
-          { className: 'dst-panel', role: 'dialog', 'aria-label': '股票行情设置' },
-          h('div', { className: 'dst-panel-title' }, '股票行情设置'),
-          h('label', { className: 'dst-label', htmlFor: 'dst-symbols' }, '股票代码'),
-          h('textarea', {
-            id: 'dst-symbols',
-            className: 'dst-textarea',
-            value: symbols,
-            spellCheck: false,
-            placeholder: 'AAPL, TSLA, 600519.SH, 00700.HK',
-            onChange: (event) => setSymbols(event.target.value),
-          }),
-          h(
-            'div',
-            { className: 'dst-hint' },
-            '支持 AAPL、600519.SH、000001.SZ、430047.BJ、00700.HK，也可直接写 sh600519；用逗号或换行分隔。',
-          ),
-          h('label', { className: 'dst-label', htmlFor: 'dst-refresh' }, '刷新频率（秒）'),
-          h('input', {
-            id: 'dst-refresh',
-            className: 'dst-input',
-            type: 'number',
-            min: 5,
-            max: 300,
-            step: 1,
-            value: refresh,
-            onChange: (event) => setRefresh(event.target.value),
-          }),
-          data?.fetchedAt
-            ? h('div', { className: 'dst-hint' }, `最近更新 ${new Date(data.fetchedAt).toLocaleTimeString()}`)
-            : null,
-          h('label', { className: 'dst-label', htmlFor: 'dst-flash' }, '涨跌提醒阈值（%）'),
-          h('input', {
-            id: 'dst-flash',
-            className: 'dst-input',
-            type: 'number',
-            min: 0,
-            max: 20,
-            step: 0.5,
-            value: flash,
-            onChange: (event) => setFlash(event.target.value),
-          }),
-          h('div', { className: 'dst-hint' }, '涨跌幅超过该值时，该条目会轻微闪烁提醒；填 0 关闭提醒。'),
-          error ? h('div', { className: 'dst-error', role: 'alert' }, error) : null,
-          h(
-            'div',
-            { className: 'dst-panel-footer' },
-            h('button', { type: 'button', className: 'dst-button', onClick: onClose, disabled: saving }, '取消'),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dst-button dst-button-primary',
-                disabled: saving,
-                onClick: () => onSave(symbols, refresh, flash),
-              },
-              saving ? '保存中…' : '保存',
-            ),
-          ),
-        );
-      }
-
-      /**
-       * The strip itself: polling, marquee timing, and the settings popover.
-       * @returns rendered strip.
-       */
       function TickerBar() {
         const rootRef = useRef(null);
         const viewportRef = useRef(null);
         const measureRef = useRef(null);
-        const [data, setData] = useState(null);
-        const [status, setStatus] = useState('loading');
+        const symbols = useWatchlist();
+        const key = JSON.stringify(symbols);
+        const [prefs, setPrefs] = useState(readPrefs);
+        const [snapshot, setSnapshot] = useState(() => latestQuotes);
+        const [failedKey, setFailedKey] = useState(null);
         const [paused, setPaused] = useState(false);
         const [viewportWidth, setViewportWidth] = useState(0);
         const [passWidth, setPassWidth] = useState(0);
-        const [panelOpen, setPanelOpen] = useState(false);
         const [selected, setSelected] = useState(null);
-        const [saving, setSaving] = useState(false);
-        const [saveError, setSaveError] = useState('');
-        const [notice, setNotice] = useState('');
 
         useFrameSpace(rootRef);
 
-        const load = useCallback(async () => {
-          try {
-            const response = await fetch(`${API_BASE}/quotes`, { headers: { accept: 'application/json' } });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const payload = await response.json();
-            if (payload?.ok === false) throw new Error(payload.error || '请求失败');
-            setData(payload);
-            setStatus('ready');
-          } catch (error) {
-            setStatus((current) => (current === 'ready' ? 'stale' : 'error'));
-            setSaveError('');
-            // Keep the previous payload on screen; the next poll may recover.
-            console.warn('[dsh-stock-ticker] quote request failed:', error instanceof Error ? error.message : error);
-          }
+        useEffect(() => onPrefsChange(() => setPrefs(readPrefs())), []);
+        useEffect(() => {
+          quoteListeners.add(setSnapshot);
+          setSnapshot(latestQuotes);
+          return () => quoteListeners.delete(setSnapshot);
         }, []);
 
+        const load = useCallback(async () => {
+          const list = JSON.parse(key);
+          try {
+            await refreshQuotes(list);
+            setFailedKey(null);
+          } catch {
+            setFailedKey(key);
+          }
+        }, [key]);
+
         useEffect(() => {
-          let cancelled = false;
-          const run = () => {
-            if (!cancelled) void load();
+          if (key === '[]') return undefined;
+          const refreshMs = prefs.refreshSeconds * 1000;
+          const tick = () => {
+            if (document.visibilityState === 'hidden') return;
+            if (latestQuotes?.key === key && Date.now() - latestQuotes.at < refreshMs - 500) return;
+            void load();
           };
-          run();
-          const refreshMs = Math.max(5, Number(data?.refreshSeconds) || 15) * 1000;
-          const timer = setInterval(run, refreshMs);
+          tick();
+          const timer = window.setInterval(tick, refreshMs);
+          document.addEventListener('visibilitychange', tick);
           return () => {
-            cancelled = true;
-            clearInterval(timer);
+            window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', tick);
           };
-        }, [data?.refreshSeconds, load]);
+        }, [key, load, prefs.refreshSeconds]);
 
-        useEffect(() => {
-          const onVisible = () => {
-            if (document.visibilityState === 'visible') void load();
-          };
-          document.addEventListener('visibilitychange', onVisible);
-          return () => document.removeEventListener('visibilitychange', onVisible);
-        }, [load]);
-
-        const quotes = Array.isArray(data?.quotes) ? data.quotes : [];
+        const quotes = snapshot?.key === key ? snapshot.quotes : [];
 
         useEffect(() => {
           const viewport = viewportRef.current;
@@ -1476,54 +1413,6 @@ window.__ModuleLoader__.load({
           observer.observe(measure);
           return () => observer.disconnect();
         }, [quotes.length]);
-
-        const onSave = useCallback(
-          async (symbols, refresh, flash) => {
-            setSaving(true);
-            setSaveError('');
-            setNotice('');
-            try {
-              const response = await fetch(`${API_BASE}/config`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                  symbols: String(symbols)
-                    .split(/[\s,，;；、]+/)
-                    .map((item) => item.trim())
-                    .filter((item) => item !== ''),
-                  refreshSeconds: Number(refresh),
-                  flashPercent: Number(flash),
-                }),
-              });
-              const payload = await response.json().catch(() => ({}));
-              if (!response.ok || payload?.ok === false) {
-                throw new Error(payload?.error || `HTTP ${response.status}`);
-              }
-              setData((current) => ({ ...(current ?? {}), ...payload }));
-              setStatus('ready');
-              setPanelOpen(false);
-              if (payload.invalidSymbols?.length) {
-                setNotice(`已忽略无法识别的代码：${payload.invalidSymbols.join('、')}`);
-              } else if (payload.persisted === false) {
-                setNotice('已生效，但未能写入配置，重启后将恢复默认值。');
-              }
-              void load();
-            } catch (error) {
-              setSaveError(error instanceof Error ? error.message : String(error));
-            } finally {
-              setSaving(false);
-            }
-          },
-          [load],
-        );
-
-        const closePanel = useCallback(() => setPanelOpen(false), []);
-
-        useEffect(() => {
-          if (notice === '') return undefined;
-          const id = setTimeout(() => setNotice(''), 6000);
-          return () => clearTimeout(id);
-        }, [notice]);
 
         useEffect(() => {
           if (selected === null) return undefined;
@@ -1543,7 +1432,7 @@ window.__ModuleLoader__.load({
           };
         }, [selected]);
 
-        const flashPercent = Number.isFinite(Number(data?.flashPercent)) ? Number(data.flashPercent) : 3;
+        const flashPercent = prefs.alertPct;
 
         const singlePass = useMemo(
           () => quotes.map((quote) => h(TickerItem, { key: quote.symbol, quote, flashPercent, onSelect: setSelected })),
@@ -1595,7 +1484,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'dst-copy', 'aria-hidden': 'true' }, items),
             ),
           );
-        } else if (status === 'error') {
+        } else if (failedKey === key && snapshot?.key !== key) {
           body = h(
             'div',
             { className: 'dst-viewport' },
@@ -1607,49 +1496,16 @@ window.__ModuleLoader__.load({
             ),
           );
         } else {
-          body = h('div', { className: 'dst-viewport' }, h('div', { className: 'dst-message' }, '正在加载行情…'));
+          body = h('div', { className: 'dst-viewport' }, h('div', { className: 'dst-message' }, symbols.length === 0 ? '自选股为空' : snapshot?.key === key ? '暂无行情' : '正在加载行情…'));
         }
 
-        const selectedQuote =
-          selected === null ? null : quotes.find((quote) => quote.symbol === selected.symbol) ?? selected;
+        const selectedQuote = quotes.find((quote) => quote.symbol === selected?.symbol);
 
         return h(
           'div',
-          { className: 'dst-root', ref: rootRef, role: 'region', 'aria-label': '股票行情' },
+          { className: 'dst-root', ref: rootRef, role: 'region', 'aria-label': '股票行情', 'data-convention': prefs.convention },
           body,
-          h(
-            'div',
-            { className: 'dst-actions' },
-            notice ? h('span', { className: 'dst-notice', title: notice }, notice) : null,
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dst-icon-button',
-                title: notice || '行情设置',
-                'aria-label': '行情设置',
-                'aria-expanded': panelOpen ? 'true' : 'false',
-                onClick: () => {
-                  setSelected(null);
-                  setPanelOpen((open) => !open);
-                },
-              },
-              h(
-                'svg',
-                { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true', fill: 'currentColor' },
-                h('path', {
-                  d: 'M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Zm0 1.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8Z',
-                }),
-                h('path', { d: 'M7.1 1h1.8l.3 1.7c.3.1.7.2 1 .4l1.5-.9 1.3 1.3-.9 1.5c.2.3.3.7.4 1l1.7.3v1.8l-1.7.3c-.1.3-.2.7-.4 1l.9 1.5-1.3 1.3-1.5-.9c-.3.2-.7.3-1 .4L8.9 15H7.1l-.3-1.7c-.3-.1-.7-.2-1-.4l-1.5.9-1.3-1.3.9-1.5c-.2-.3-.3-.7-.4-1L1 8.9V7.1l1.7-.3c.1-.3.2-.7.4-1l-.9-1.5 1.3-1.3 1.5.9c.3-.2.7-.3 1-.4L7.1 1Z', opacity: 0.55 }),
-              ),
-            ),
-            selectedQuote === null
-              ? null
-              : h(QuoteDetail, { quote: selectedQuote, onClose: () => setSelected(null) }),
-            panelOpen
-              ? h(SettingsPanel, { data, saving, error: saveError, onSave, onClose: closePanel })
-              : null,
-          ),
+          selectedQuote === undefined ? null : h(QuoteDetail, { quote: selectedQuote, onClose: () => setSelected(null) }),
         );
       }
 
@@ -1836,7 +1692,8 @@ window.__ModuleLoader__.load({
     /** The行情 page registered under the `main` key `stock-quotes`. */
     function StockQuotesPage(props) {
       const t = translate(props);
-      const [symbols, setSymbols] = React.useState(readWatchlist);
+      const symbols = useWatchlist();
+      const setSymbols = (update) => writeWatchlist(update(readWatchlist()));
       const [view, setView] = React.useState({ status: 'loading', quotes: [], updatedAt: 0, error: '' });
       const [auto, setAuto] = React.useState(true);
       const [draft, setDraft] = React.useState('');
@@ -1876,12 +1733,12 @@ window.__ModuleLoader__.load({
           return true;
         }
         try {
-          const result = await fetchQuotes(list, signal ? { signal } : undefined);
-          if (signal && signal.aborted) return true;
+          const result = await refreshQuotes(list);
+          if (signal?.aborted || JSON.stringify(list) !== JSON.stringify(readWatchlist())) return true;
           setView({ status: 'ready', quotes: result.quotes, updatedAt: Date.now(), error: '' });
           return true;
         } catch (error) {
-          if (signal && signal.aborted) return true;
+          if (signal?.aborted || JSON.stringify(list) !== JSON.stringify(readWatchlist())) return true;
           // A failed tick keeps the last good quotes on screen and reports the
           // failure in a strip; blanking the table would be worse than stale data.
           setView((previous) => ({
@@ -1900,8 +1757,6 @@ window.__ModuleLoader__.load({
         void runRefresh(controller.signal);
         return () => controller.abort();
       }, [runRefresh, symbols]);
-
-      React.useEffect(() => { writeWatchlist(symbols); }, [symbols]);
 
       // Settings written from the plugin's own card apply to an open panel
       // immediately, without waiting for a reload.

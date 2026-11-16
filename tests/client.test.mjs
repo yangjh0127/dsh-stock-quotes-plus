@@ -355,6 +355,10 @@ const toggle = () => collect(tickerCard({ t })).find((node) => node.type === 'la
 check('ticker switch starts unchecked', toggle().props.checked, false);
 toggle().props.onChange({ target: { checked: true } });
 check('ticker switch persists and mounts ticker', tickerOverlay()?.type?.name, 'TickerBar');
+check('ticker has no independent settings button', renderText(tickerOverlay()).includes('行情设置'), false);
+setWatchlist([]);
+check('ticker respects an empty panel watchlist', renderText(tickerOverlay()).includes('自选股为空'), true);
+store.delete('dsh-stock-quotes/watchlist');
 toggle().props.onChange({ target: { checked: false } });
 check('ticker switch persists and unmounts ticker', tickerOverlay(), null);
 store.delete('dsh-stock-quotes/prefs');

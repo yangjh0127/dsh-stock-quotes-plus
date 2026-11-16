@@ -40,7 +40,7 @@
     "prepublishOnly": "npm test",
     "check:release": "node scripts/check-release.mjs",
     "build:index": "node scripts/build-index.mjs",
-    "lint": "eslint client.js quotes.js index.js ticker.js",
+    "lint": "eslint client.js quotes.js index.js",
     "pack:check": "npm pack --dry-run"
   },
   "exports": {
@@ -54,7 +54,6 @@
   "files": [
     "index.js",
     "quotes.js",
-    "ticker.js",
     "LICENSE-ticker",
     "client.js",
     "cordis.patch.yml",
