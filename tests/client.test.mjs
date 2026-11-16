@@ -211,13 +211,18 @@ check('x follows the session clock', seriesXAt(series([['09:30', 1], ['11:30', 2
 check('x falls back to the index without a session', seriesXAt(series([['09:30', 1], ['11:30', 2]]), 1).toFixed(1), '88.0');
 
 // --- the focus chart -------------------------------------------------------
-const { focusGeometry, nearestIndex, xAxisTicks, formatVolume } = mod.internals;
+const { focusGeometry, volumeGeometry, nearestIndex, xAxisTicks, formatVolume } = mod.internals;
 const CN_DAY = [
   { day: '2026-10-21', t: '09:30', v: 100, avg: 100, vol: 10 },
   { day: '2026-10-21', t: '10:30', v: 120, avg: 110, vol: 20 },
   { day: '2026-10-21', t: '11:30', v: 110, avg: 111, vol: 15 },
 ];
 const geo = focusGeometry(CN_DAY, { kind: 'cn', mode: 1, preClose: 105 });
+
+const volumeBars = volumeGeometry(CN_DAY, geo.xs, 912, 48);
+check('volume uses its own vertical scale', volumeBars.bars.map((bar) => bar.height), [24, 48, 36]);
+check('volume bar direction follows the previous minute price', volumeBars.bars.map((bar) => Math.sign(bar.change)), [0, 1, -1]);
+check('volume omits unavailable and zero values', volumeGeometry([{ vol: 0 }, {}], [0, 10], 10, 48).bars, []);
 
 check('geometry builds a path', geo.d.startsWith('M'), true);
 check('geometry builds a closed area', geo.area.endsWith('Z'), true);

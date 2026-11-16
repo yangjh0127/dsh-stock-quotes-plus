@@ -117,11 +117,12 @@ function mergeDayPoints(series, points) {
       series.points.clear();
     }
     const previous = series.points.get(point.minute);
-    series.points.set(point.minute, {
-      ...point,
-      avg: point.avg ?? previous?.avg,
-      vol: point.vol ?? previous?.vol,
-    });
+    const volume = point.vol !== undefined && (!point.volumeEstimated || previous?.vol === undefined || previous.volumeEstimated)
+      ? point : previous;
+    const next = { ...point, avg: point.avg ?? previous?.avg, vol: volume?.vol };
+    if (volume?.volumeEstimated) next.volumeEstimated = true;
+    else delete next.volumeEstimated;
+    series.points.set(point.minute, next);
   }
 }
 
@@ -180,8 +181,21 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
     const timestamp = row.timestamp.getTime();
     if (timestamp < (entry.latestTimestamp ?? 0)) return;
     entry.latestTimestamp = timestamp;
-    entry.latest = point;
+    const total = toNumber(row.volume);
+    if (total !== undefined && total >= 0) {
+      const previous = entry.volumeSample;
+      entry.volumeSample = { day: point.day, minute: point.minute, total };
+      // A day reset or a gap spanning several minutes gives no reliable
+      // allocation of the cumulative change to a single bar.
+      if (previous?.day === point.day && point.minute - previous.minute <= 1 && total >= previous.total) {
+        const current = entry.points.get(point.minute);
+        const earlier = current?.volumeEstimated ? current.vol : 0;
+        point.vol = earlier + total - previous.total;
+        point.volumeEstimated = true;
+      }
+    }
     mergeDayPoints(entry, [point]);
+    entry.latest = entry.points.get(point.minute);
   }
 
   async function fetchDaily(symbol) {
@@ -201,6 +215,7 @@ export function createMarketData(getContext = createQuoteContext(), closedKey = 
         entry.day = '';
         mergeDayPoints(entry, rows.map((row) => dayPoint(row, symbol)).filter(Boolean));
         mergeDayPoints(entry, live);
+        if (entry.latest) entry.latest = entry.points.get(entry.latest.minute);
         entry.seeded = true;
       })().finally(() => { entry.pending = undefined; });
       await entry.pending;

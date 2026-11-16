@@ -173,10 +173,11 @@ assert.equal(historyCalls, 3);
 let dailySeeds = 0;
 let liveTime = '2026-11-16T01:31:05Z';
 let livePrice = '11';
+let liveVolume = 195;
 let now = Date.now();
 const realNow = Date.now;
 const minuteData = createMarketData(async () => ({
-  async quote() { return [{ symbol: '600519.SH', lastDone: livePrice, timestamp: new Date(liveTime) }]; },
+  async quote() { return [{ symbol: '600519.SH', lastDone: livePrice, timestamp: new Date(liveTime), volume: liveVolume }]; },
   async staticInfo() { return []; },
   async intraday() {
     dailySeeds++;
@@ -197,22 +198,43 @@ try {
 
   now += 10_000;
   livePrice = '12';
+  liveVolume = 205;
   liveTime = '2026-11-16T01:31:15Z';
   const update = await minuteData.fetchQuotes(['sh600519'], { includeIntraday: true });
   assert.equal(update.intraday[0].symbol, 'sh600519');
   assert.equal(update.intraday[0].point.v, 12);
+  assert.equal(update.intraday[0].point.vol, 75);
+  assert.equal(update.intraday[0].point.volumeEstimated, undefined);
 
   now += 60_000;
   livePrice = '13';
+  liveVolume = 245;
   liveTime = '2026-11-16T01:32:15Z';
+  const live = await minuteData.fetchQuotes(['600519.SH'], { includeIntraday: true });
+  assert.equal(live.intraday[0].point.vol, 40);
+  assert.equal(live.intraday[0].point.volumeEstimated, true);
+  now += 10_000;
+  liveVolume = 257;
+  liveTime = '2026-11-16T01:32:25Z';
   await minuteData.fetchQuotes(['600519.SH']);
-  assert.deepEqual((await minuteData.fetchTrend('600519.SH', 1)).map(({ v }) => v), [10, 12, 13]);
+  const minutes = await minuteData.fetchTrend('600519.SH', 1);
+  assert.deepEqual(minutes.map(({ v }) => v), [10, 12, 13]);
+  assert.deepEqual(minutes.map(({ vol }) => vol), [120, 75, 52]);
+
+  now += 180_000;
+  liveVolume = 500;
+  liveTime = '2026-11-16T01:35:00Z';
+  await minuteData.fetchQuotes(['600519.SH']);
+  assert.equal((await minuteData.fetchTrend('600519.SH', 1)).at(-1).vol, undefined);
 
   now += 86_400_000;
   livePrice = '14';
+  liveVolume = 900;
   liveTime = '2026-11-17T01:30:15Z';
   await minuteData.fetchQuotes(['600519.SH']);
-  assert.deepEqual((await minuteData.fetchTrend('600519.SH', 1)).map(({ v }) => v), [14]);
+  const nextDay = await minuteData.fetchTrend('600519.SH', 1);
+  assert.deepEqual(nextDay.map(({ v }) => v), [14]);
+  assert.equal(nextDay[0].vol, undefined);
   assert.equal(dailySeeds, 1);
 } finally {
   Date.now = realNow;
