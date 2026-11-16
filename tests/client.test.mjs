@@ -83,7 +83,7 @@ const rowsOf = (tree) => collect(tree).filter((node) => node.props && node.props
 // --- load the client module ------------------------------------------------
 await import('../client.js');
 const { id, factory } = globalThis.window.__module;
-check('loader id equals package name', id, 'dsh-stock-quotes');
+check('loader id equals package name', id, 'dsh-stock-quotes-plus');
 
 const mod = factory((specifier) => {
   if (specifier === 'react') return React;
@@ -336,16 +336,28 @@ check('no empty dictionary value', Object.values(dictionaries.zh).concat(Object.
 check('no orphaned remove label', Object.prototype.hasOwnProperty.call(dictionaries.zh, 'watchlist.remove'), false);
 
 // --- registrations ---------------------------------------------------------
-check('slots injected', injected.map((entry) => entry.key), ['main', 'plugins.bundle.config', 'sidebar.panellist']);
+check('slots injected', injected.map((entry) => entry.key), ['shell.overlay', 'main', 'plugins.bundle.config', 'sidebar.panellist']);
 check('one main page', byName('main').length, 1);
 check('main key', byName('main')[0].options.key, 'stock-quotes');
 check('no standalone settings page', byName('settings.section').length, 0);
 check('one bundle-page card', byName('plugins.bundle.config').length, 1);
-check('bundle-page card key', byName('plugins.bundle.config')[0].options.key, 'dsh-stock-quotes');
+check('bundle-page card key', byName('plugins.bundle.config')[0].options.key, 'dsh-stock-quotes-plus');
 check('one sidebar icon', byName('sidebar.panellist').length, 1);
 const icon = byName('sidebar.panellist')[0];
 check('sidebar id', icon.options.id, 'stock-quotes');
 check('label is a thunk', typeof icon.options.label, 'function');
+
+// --- optional ticker -------------------------------------------------------
+const tickerOverlay = byName('shell.overlay')[0].component;
+check('ticker defaults to hidden', tickerOverlay(), null);
+const tickerCard = byName('plugins.bundle.config')[0].component;
+const toggle = () => collect(tickerCard({ t })).find((node) => node.type === 'label' && node.children.some((child) => child?.children?.includes(t('settings.ticker')))).children.find((node) => node.type === 'input');
+check('ticker switch starts unchecked', toggle().props.checked, false);
+toggle().props.onChange({ target: { checked: true } });
+check('ticker switch persists and mounts ticker', tickerOverlay()?.type?.name, 'TickerBar');
+toggle().props.onChange({ target: { checked: false } });
+check('ticker switch persists and unmounts ticker', tickerOverlay(), null);
+store.delete('dsh-stock-quotes/prefs');
 
 // --- name resolution -------------------------------------------------------
 check('default label resolves neutrally', icon.options.label(), '\u6570\u636e');

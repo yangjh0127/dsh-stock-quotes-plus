@@ -1,10 +1,7 @@
-# dsh-stock-quotes
+# dsh-stock-quotes-plus
 
 [中文](README.md) | **English**
 
-[![npm](https://img.shields.io/npm/v/dsh-stock-quotes)](https://www.npmjs.com/package/dsh-stock-quotes)
-[![downloads](https://img.shields.io/npm/dm/dsh-stock-quotes)](https://www.npmjs.com/package/dsh-stock-quotes)
-[![CI](https://github.com/AhaCrazy/dsh-stock-quotes/actions/workflows/ci.yml/badge.svg)](https://github.com/AhaCrazy/dsh-stock-quotes/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that shows **live quotes for a watchlist of stocks** in a sidebar data panel, and registers a `stock_quote` tool so the agent can answer "what is 贵州茅台 at right now" inside the conversation.
@@ -22,39 +19,27 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin tha
 
 ## Install
 
-The plugin is published to npm, so a DSH session installs it by package name:
-
-```
-plugin_manager  action: install_bundle  target: dsh-stock-quotes
-```
-
-Pin a version by putting it in the spec (for example `dsh-stock-quotes@2.0.2`). The **Plugins** page in the Web sidebar runs the same operation — type the package name into its install field. Under the hood `plugin_manager` has pnpm fetch the package from the registry, so no clone is needed.
-
-> Write operations of `plugin_manager` need `danger-full-access` or a per-call approval; installed Host code runs inside the host process.
-
-To inspect what would ship without installing it into DSH:
+Clone the repository:
 
 ```bash
-npm pack dsh-stock-quotes --dry-run
+git clone https://github.com/yangjh0127/dsh-stock-quotes-plus.git
 ```
 
-The sidebar icon appears once the client module loads — reload the page if it does not show up immediately. `stock_quote` shows up in the agent's tool list on the next request.
-
-Installing from source (while changing the code, or offline):
-
-```bash
-git clone https://github.com/AhaCrazy/dsh-stock-quotes.git
-```
+Install the local directory from a DSH Web session:
 
 ```
-plugin_manager  action: install_bundle  target: <path-to>/dsh-stock-quotes
+plugin_manager  action: install_bundle  target: <absolute-path>/dsh-stock-quotes-plus
 ```
 
-To remove it:
+When switching from the upstream panel, uninstall it first to avoid duplicate sidebar and stock_quote registrations. Existing browser watchlists and panel preferences carry over.
 
-```
-plugin_manager  action: remove_bundle  target: dsh-stock-quotes
-```
+## Top stock ticker
+
+In DSH Web, open **Plugins → Data panel → Panel settings** and select **Show top stock ticker**. It is off by default. The setting applies immediately and survives reloads. Turning it off stops polling and restores the frame spacing.
+
+Use the ticker's gear button to configure its own watchlist, refresh interval, and price-move alerts. Click a quote to view details. The host fetches ticker data from Tencent and saves ticker settings to the current profile.
+
+Based on [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes), with a ticker adapted from [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker). See [LICENSE](LICENSE) and [LICENSE-ticker](LICENSE-ticker).
 
 ## Panel actions
 
@@ -180,8 +165,8 @@ If a code you can see in 同花顺 does not resolve, try it with its full suffix
 
 ```yaml
 - insert:
-    - id: stock-quotes
-      name: 'dsh-stock-quotes'
+    - id: stock-quotes-plus
+      name: 'dsh-stock-quotes-plus'
       config:
         defaultSymbols:
           - sh000001

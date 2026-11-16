@@ -1,4 +1,4 @@
-# Release automation for dsh-stock-quotes.
+# Release automation for dsh-stock-quotes-plus.
 #
 # A pushed `v*` tag is the only trigger: this workflow checks that the tag, the
 # package manifest and the pinned search-index version agree, then publishes to
@@ -83,9 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          if npm view "dsh-stock-quotes@${version}" version >/dev/null 2>&1; then
+          if npm view "dsh-stock-quotes-plus@${version}" version >/dev/null 2>&1; then
             echo "already-published=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::dsh-stock-quotes@${version} is already on npm; skipping the publish step."
+            echo "::notice::dsh-stock-quotes-plus@${version} is already on npm; skipping the publish step."
           else
             echo "already-published=false" >> "$GITHUB_OUTPUT"
           fi
@@ -105,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          title="dsh-stock-quotes ${GITHUB_REF_NAME#v}"
+          title="dsh-stock-quotes-plus ${GITHUB_REF_NAME#v}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             # Re-running a failed job must not fail on the release it already made.
             gh release edit "$GITHUB_REF_NAME" --title "$title"

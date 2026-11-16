@@ -1,4 +1,4 @@
-# Bundle patch layer for dsh-stock-quotes.
+# Bundle patch layer for dsh-stock-quotes-plus.
 #
 # `insert` adds one Loader row: the Host half (index.js) registers the
 # `stock_quote` tool; the package's `dsh.client` declaration makes the Web app
@@ -8,8 +8,8 @@
 # calls `stock_quote` without arguments. Edit this list (or override it in
 # the profile's own patch layer) to change the defaults.
 - insert:
-    - id: stock-quotes
-      name: 'dsh-stock-quotes'
+    - id: stock-quotes-plus
+      name: 'dsh-stock-quotes-plus'
       config:
         defaultSymbols:
           - sh000001

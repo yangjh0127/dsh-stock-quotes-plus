@@ -17,7 +17,9 @@
  */
 import { SYMBOL_HELP, fetchQuotes, formatAmount } from './quotes.js';
 
-export const name = 'stock-quotes';
+import { registerTickerRoutes } from './ticker.js';
+
+export const name = 'stock-quotes-plus';
 
 export const inject = ['tools'];
 
@@ -245,4 +247,5 @@ export function apply(ctx, config = {}) {
     ? config.defaultSymbols.filter((entry) => typeof entry === 'string' && entry.trim() !== '')
     : [];
   ctx.tools.register(buildToolDefinition(configured.length > 0 ? configured : FALLBACK_SYMBOLS));
+  ctx.inject(['webServer'], (webCtx) => registerTickerRoutes(webCtx, config));
 }

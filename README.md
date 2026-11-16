@@ -1,10 +1,7 @@
-# dsh-stock-quotes
+# dsh-stock-quotes-plus
 
 **中文** | [English](README.en.md)
 
-[![npm](https://img.shields.io/npm/v/dsh-stock-quotes)](https://www.npmjs.com/package/dsh-stock-quotes)
-[![downloads](https://img.shields.io/npm/dm/dsh-stock-quotes)](https://www.npmjs.com/package/dsh-stock-quotes)
-[![CI](https://github.com/AhaCrazy/dsh-stock-quotes/actions/workflows/ci.yml/badge.svg)](https://github.com/AhaCrazy/dsh-stock-quotes/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：在侧边栏数据面板里显示**自选股实时行情**，同时注册 `stock_quote` 工具，让 Agent 能在对话里直接回答"茅台现在多少钱"这类问题。
@@ -22,39 +19,27 @@
 
 ## 安装
 
-插件已发布到 npm，在 DSH 会话里直接按包名安装就行：
-
-```
-plugin_manager  action: install_bundle  target: dsh-stock-quotes
-```
-
-要固定版本就把版本写进 spec（例如 `dsh-stock-quotes@2.0.2`）。Web 侧边栏的**插件**页也是同一套操作，在安装框里填包名即可 —— 底层是 `plugin_manager` 服务用 pnpm 从 registry 拉包，不需要提前 clone 仓库。
-
-> `plugin_manager` 的写操作要求 `danger-full-access` 权限或单次批准；安装后的 Host 代码在宿主进程里运行。
-
-只想确认包内容、不用 DSH 安装：
+先克隆仓库：
 
 ```bash
-npm pack dsh-stock-quotes --dry-run   # 看会装进 profile 的文件清单
+git clone https://github.com/yangjh0127/dsh-stock-quotes-plus.git
 ```
 
-客户端模块加载后侧边栏会出现图标；没出现就刷新一次页面。`stock_quote` 会在下一次请求的工具清单里出现。
-
-从源码安装（改代码或离线时用）：
-
-```bash
-git clone https://github.com/AhaCrazy/dsh-stock-quotes.git
-```
+在 DSH Web 会话中用本地路径安装：
 
 ```
-plugin_manager  action: install_bundle  target: <path-to>/dsh-stock-quotes
+plugin_manager  action: install_bundle  target: <绝对路径>/dsh-stock-quotes-plus
 ```
 
-卸载：
+这个版本可替换上游数据面板并沿用原有浏览器自选股与面板设置。切换版本时先卸载上游插件，避免两个版本重复注册侧边栏和 stock_quote。
 
-```
-plugin_manager  action: remove_bundle  target: dsh-stock-quotes
-```
+## 顶部行情条
+
+打开 DSH Web 的「插件 → 数据面板 → 面板设置」，勾选「显示顶部行情条」。默认关闭，切换即时生效，刷新页面后保留。关闭时停止行情条的自动刷新并释放顶部空间。
+
+行情条右侧的齿轮可独立设置自选股、刷新间隔和涨跌提醒阈值。点击代码可查看详情。行情条数据由宿主请求腾讯行情，设置保存到当前 profile。
+
+本项目基于 [AhaCrazy/dsh-stock-quotes](https://github.com/AhaCrazy/dsh-stock-quotes)，顶部行情条改编自 [kfat77/dsh-stock-ticker](https://github.com/kfat77/dsh-stock-ticker)。两份 MIT 许可证分别见 [LICENSE](LICENSE) 和 [LICENSE-ticker](LICENSE-ticker)。
 
 ## 面板操作
 
@@ -180,8 +165,8 @@ node scripts/build-index.mjs   # 需要能访问 push2.eastmoney.com
 
 ```yaml
 - insert:
-    - id: stock-quotes
-      name: 'dsh-stock-quotes'
+    - id: stock-quotes-plus
+      name: 'dsh-stock-quotes-plus'
       config:
         defaultSymbols:
           - sh000001

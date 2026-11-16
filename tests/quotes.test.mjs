@@ -104,7 +104,9 @@ try {
   console.log('  unresolved =', JSON.stringify(live.unresolved));
   check('resolved 5 of 6', live.quotes.length, 5);
   check('unresolved is the bad one', live.unresolved, ['nope!!']);
-  check('every quote has a price', live.quotes.every((quote) => typeof quote.price === 'number'), true);
+  // The live feed can return a symbol and name without a trading price.
+  check('available prices are finite', live.quotes.every((quote) => quote.price === undefined || Number.isFinite(quote.price)), true);
+  check('at least one quote has a price', live.quotes.some((quote) => Number.isFinite(quote.price)), true);
   check('every quote has a name', live.quotes.every((quote) => typeof quote.name === 'string' && quote.name.length > 0), true);
 
   let calls = 0;

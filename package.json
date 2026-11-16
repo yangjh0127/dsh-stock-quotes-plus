@@ -1,5 +1,5 @@
 {
-  "name": "dsh-stock-quotes",
+  "name": "dsh-stock-quotes-plus",
   "version": "2.0.2",
   "description": "DeepSeek Harness plugin: a neutral, configurable sidebar data panel for A-share / Hong Kong / US quotes and boards, plus a stock_quote tool for the agent.",
   "keywords": [
@@ -24,11 +24,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AhaCrazy/dsh-stock-quotes.git"
+    "url": "git+https://github.com/yangjh0127/dsh-stock-quotes-plus.git"
   },
-  "homepage": "https://github.com/AhaCrazy/dsh-stock-quotes#readme",
+  "homepage": "https://github.com/yangjh0127/dsh-stock-quotes-plus#readme",
   "bugs": {
-    "url": "https://github.com/AhaCrazy/dsh-stock-quotes/issues"
+    "url": "https://github.com/yangjh0127/dsh-stock-quotes-plus/issues"
   },
   "icon": "./icon.svg",
   "meta": {
@@ -40,7 +40,7 @@
     "prepublishOnly": "npm test",
     "check:release": "node scripts/check-release.mjs",
     "build:index": "node scripts/build-index.mjs",
-    "lint": "eslint client.js quotes.js index.js",
+    "lint": "eslint client.js quotes.js index.js ticker.js",
     "pack:check": "npm pack --dry-run"
   },
   "exports": {
@@ -54,6 +54,8 @@
   "files": [
     "index.js",
     "quotes.js",
+    "ticker.js",
+    "LICENSE-ticker",
     "client.js",
     "cordis.patch.yml",
     "icon.svg",
