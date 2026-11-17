@@ -177,8 +177,17 @@ check('the afternoon resumes from the middle',
   sparklinePath(series([['13:00', 10], ['14:00', 20]]), { kind: 'cn' }).startsWith('M44.00'), true);
 check('a whole Hong Kong session fills the box',
   tailOf(sparklinePath(series([['09:30', 10], ['16:00', 20]]), { kind: 'hk' })), 'L88.00 1.00');
+  for (const kind of ['cn', 'hk']) {
+    const opening = series([['09:25', 10], ['09:30', 11], ['09:35', 12]]);
+    check(kind + ' pre-open quote stays at the left edge',
+      mod.internals.seriesXAt(opening, 0, kind), 0);
+    check(kind + ' opening line remains near the left edge',
+      sparklinePath(opening, { kind }).startsWith('M0.00 23.00L0.00 '), true);
+  }
 check('a US session crosses midnight without wrapping the axis',
   tailOf(sparklinePath(series([['21:30', 10], ['04:00', 20]]), { kind: 'us' })), 'L88.00 1.00');
+  check('US pre-open quote stays at the left edge',
+    mod.internals.seriesXAt(series([['22:25', 10], ['22:30', 11]]), 0, 'us'), 0);
 check('US mid-session lands proportionally',
   tailOf(sparklinePath(series([['21:30', 10], ['00:30', 20]]), { kind: 'us' })), 'L40.62 1.00');
 // Daylight saving: the US session opens at 21:30 Beijing in summer and 22:30 in

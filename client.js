@@ -423,7 +423,7 @@ window.__ModuleLoader__.load({
       const first = Array.isArray(points) && points.length > 0 ? minutesOf(points[0].t) : undefined;
       if (first === undefined) return opens[0];
       for (const open of opens) {
-        const distance = Math.abs(((first - open + 1440) % 1440));
+        const distance = Math.abs(first - open);
         if (distance <= 10) return open;
       }
       return opens[0];
@@ -434,8 +434,9 @@ window.__ModuleLoader__.load({
       const session = SESSIONS[kind];
       const start = typeof open === 'number' && Number.isFinite(open) ? open : (kind === 'us' ? 1290 : 570);
       let delta = minutes - start;
-      // A session that crosses midnight (US on the Beijing clock) starts negative.
-      if (delta < 0) delta += 1440;
+      // Only the US session crosses Beijing midnight. Its morning quotes follow
+      // the previous evening's open, while evening pre-market quotes precede it.
+      if (kind === 'us' && minutes < 12 * 60) delta += 1440;
       for (const [from, to] of session.breaks) {
         if (delta >= to) delta -= to - from;
         else if (delta > from) delta = from;
