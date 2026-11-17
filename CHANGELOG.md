@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.3] - 2026-11-17
 
-- Remove the right border from the horizontally scrollable quotes table.
+- Remove the right-side divider from each item in the top quotes ticker.
 
 ## [3.0.2] - 2026-11-17
 
