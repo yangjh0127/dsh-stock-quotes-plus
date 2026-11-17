@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createMarketCalendar, marketOf } from '../market-calendar.js';
 import { candidateSymbols, createMarketData, formatAmount } from '../quotes.js';
 import { AuthorizationRequired, createLongbridgeAuth, createQuoteContext } from '../oauth.js';
@@ -37,6 +38,35 @@ await assert.rejects(auth.getContext(), AuthorizationRequired);
 failAuthorization(new Error('cancelled'));
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal((await auth.status()).state, 'failed');
+
+const originalFetch = globalThis.fetch;
+const deviceClient = 'dsh-test-device';
+const verificationUrl = 'https://open.longbridge.cn/device';
+let polls = 0;
+try {
+  globalThis.fetch = async (url, { body }) => {
+    assert.equal(body.get('client_id'), deviceClient);
+    if (url.endsWith('/device/authorize')) {
+      return Response.json({
+        device_code: 'server-only-test-code',
+        user_code: 'TEST-CODE',
+        verification_uri: verificationUrl,
+        interval: 0.01,
+        expires_in: 5,
+      });
+    }
+    assert.ok(url.endsWith('/oauth2/token'));
+    assert.equal(body.get('device_code'), 'server-only-test-code');
+    return Response.json({ error: polls++ === 0 ? 'authorization_pending' : 'access_denied' }, { status: 400 });
+  };
+  const deviceAuth = createLongbridgeAuth(deviceClient);
+  assert.deepEqual(await deviceAuth.login(), { state: 'pending', url: verificationUrl, userCode: 'TEST-CODE' });
+  for (let n = 0; n < 30 && (await deviceAuth.status()).state === 'pending'; n++) await delay(10);
+  assert.equal(polls, 2);
+  assert.deepEqual(await deviceAuth.status(), { state: 'failed', error: '长桥授权已取消或拒绝，请重新登录。' });
+} finally {
+  globalThis.fetch = originalFetch;
+}
 
 let quoteCalls = 0;
 let staticCalls = 0;

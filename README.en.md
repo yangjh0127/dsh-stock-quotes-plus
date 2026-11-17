@@ -27,10 +27,10 @@ plugin_manager action: install_bundle target: <absolute-path-to-checkout>
 ```
 
 1. Open **Data** in the DSH sidebar and select **Sign in to Longbridge**. The same button is available in the plugin settings.
-2. Complete OAuth 2.0 authorization on the official Longbridge page. If the popup is blocked, select **Open Longbridge authorization**.
+2. Complete OAuth 2.0 authorization on the official Longbridge page. If the popup is blocked, select **Open Longbridge authorization**. If Longbridge asks for a device code, enter the code shown in the DSH panel.
 3. Return to DSH. The panel refreshes automatically. The SDK stores and refreshes tokens on the DSH host.
 
-Local sign-in uses `http://localhost:60355/callback`. For a remote host, forward the callback port or run `npm ci` and `npm run authorize -- YOUR_CLIENT_ID` under the same system user as DSH, then configure `LONGBRIDGE_CLIENT_ID`.
+Device authorization works in a browser on any device, without a port forward. Older clients that do not support device authorization fall back to `http://localhost:60355/callback`. For that flow, use a browser on the DSH host or forward the callback port over SSH.
 
 ## Symbol examples
 

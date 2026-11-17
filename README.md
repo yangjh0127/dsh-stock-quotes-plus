@@ -27,10 +27,10 @@ plugin_manager action: install_bundle target: <仓库的绝对路径>
 ```
 
 1. 在 DSH 侧栏打开「数据」，点击「登录长桥」。也可从「插件 → 数据面板 → 面板设置」登录。
-2. 在长桥官方页面完成 OAuth 2.0 授权。若浏览器拦截了弹窗，点击「打开长桥授权页」。
+2. 在长桥官方页面完成 OAuth 2.0 授权。若浏览器拦截了弹窗，点击「打开长桥授权页」。如页面要求输入设备码，使用 DSH 面板显示的授权码。
 3. 回到 DSH。授权成功后面板会自动刷新。长桥 SDK 在 DSH 宿主端保存和刷新令牌。
 
-本机授权使用 `http://localhost:60355/callback`。远程部署可转发这个回调端口，也可用同一个系统用户在宿主机执行 `npm ci` 和 `npm run authorize -- 你的ClientID`，并为 DSH 配置 `LONGBRIDGE_CLIENT_ID`。
+设备码授权可在任意设备的浏览器完成，远程部署无需转发端口。旧客户端如果不支持设备码，会回退到 `http://localhost:60355/callback`。该方式要求浏览器运行在 DSH 宿主机上，或通过 SSH 转发回调端口。
 
 ## 搜索示例
 

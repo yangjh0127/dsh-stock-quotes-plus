@@ -109,6 +109,7 @@ window.__ModuleLoader__.load({
       'auth.pending': '请在长桥页面完成授权',
       'auth.failed': '长桥登录失败，请重试。',
       'auth.open': '打开长桥授权页',
+      'auth.deviceCode': '长桥授权码',
       'settings.cardDesc': '修改侧边栏图标与面板显示的名称；留空则用默认名称。',
       'settings.name': '名称',
       'settings.namePlaceholder': '留空则用默认名称',
@@ -1667,6 +1668,7 @@ window.__ModuleLoader__.load({
     function LongbridgeLogin({ t }) {
       const [status, setStatus] = React.useState({ state: 'checking' });
       const [link, setLink] = React.useState('');
+      const [userCode, setUserCode] = React.useState('');
       const [starting, setStarting] = React.useState(false);
       const lastState = React.useRef('checking');
 
@@ -1676,7 +1678,10 @@ window.__ModuleLoader__.load({
         }
         lastState.current = next.state;
         setStatus(next);
-        if (next.state !== 'pending') setLink('');
+        if (next.state !== 'pending') {
+          setLink('');
+          setUserCode('');
+        }
       }, []);
 
       React.useEffect(() => {
@@ -1724,6 +1729,7 @@ window.__ModuleLoader__.load({
           update(next);
           if (next.state === 'pending' && next.url) {
             setLink(next.url);
+            setUserCode(next.userCode ?? '');
             if (popup && !popup.closed) popup.location.replace(next.url);
           } else {
             popup?.close();
@@ -1743,8 +1749,10 @@ window.__ModuleLoader__.load({
         h('button', { className: 'dsq-btn', type: 'button', disabled: starting || status.state === 'checking', onClick: start },
           t(starting ? 'auth.starting' : status.state === 'pending' ? 'auth.reopen' : 'auth.login')),
         status.state === 'pending' || status.state === 'failed'
-          ? h('span', { className: 'dsq-meta', role: 'status' }, t(status.state === 'pending' ? 'auth.pending' : 'auth.failed'))
+          ? h('span', { className: 'dsq-meta', role: 'status' },
+            status.state === 'failed' ? status.error || t('auth.failed') : t('auth.pending'))
           : null,
+        userCode === '' ? null : h('span', { className: 'dsq-meta' }, t('auth.deviceCode'), ' ', h('code', null, userCode)),
         link === '' ? null : h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, t('auth.open')),
       );
     }
@@ -2881,6 +2889,7 @@ window.__ModuleLoader__.load({
           'auth.pending': FALLBACK_TEXT['auth.pending'],
           'auth.failed': FALLBACK_TEXT['auth.failed'],
           'auth.open': FALLBACK_TEXT['auth.open'],
+          'auth.deviceCode': FALLBACK_TEXT['auth.deviceCode'],
           'settings.cardDesc': FALLBACK_TEXT['settings.cardDesc'],
           'settings.name': FALLBACK_TEXT['settings.name'],
           'settings.namePlaceholder': FALLBACK_TEXT['settings.namePlaceholder'],
@@ -2971,6 +2980,7 @@ window.__ModuleLoader__.load({
           'auth.pending': 'Complete authorization on Longbridge',
           'auth.failed': 'Longbridge sign-in failed. Try again.',
           'auth.open': 'Open Longbridge authorization',
+          'auth.deviceCode': 'Longbridge authorization code',
           'settings.cardDesc': 'Rename the sidebar entry and the panel heading; leave empty for the default.',
           'settings.name': 'Name',
           'settings.namePlaceholder': 'Empty uses the default',
